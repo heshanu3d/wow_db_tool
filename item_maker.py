@@ -25,7 +25,7 @@ remote_config_1 = {
 
 local_configs = [local_config_1, local_config_2]
 remote_configs = [remote_config_1]
-
+# remote_configs = local_configs
 
 class Mysql:
     def __init__(self):
@@ -97,9 +97,9 @@ class Mysql:
         return '('+','.join(column_names)+')', len(column_names)
 
     @db_operation_decorator
-    def _copy_item(self, origin_entry, new_entry, sql):
+    def _copy_item(self, origin_entry, new_entry, sql, table='item_template', primary_key='entry'):
         # 查询item_template表中指定entry的行，除了entry以外的所有列
-        query_select = f'SELECT * FROM item_template WHERE entry = {origin_entry};'
+        query_select = f'SELECT * FROM {table} WHERE {primary_key} = {origin_entry};'
         self._cursor.execute(query_select)
         result = self._cursor.fetchone()
 
@@ -117,15 +117,14 @@ class Mysql:
         else:
             print(f'未找到entry={new_entry}的行!')
 
-    def copy_item(self, origin_entry, new_entry):
-        table = 'item_template'
+    def copy_item(self, origin_entry, new_entry, table='item_template', primary_key='entry'):
         s, c = self.get_column_names_and_cnt(table)
 
-        sql_1 = f'INSERT INTO item_template {s}'
+        sql_1 = f'INSERT INTO {table} {s}'
         sql_2 = 'VALUES (' + ','.join(['%s' for i in range(c)]) + ');'
         sql_insert = f'{sql_1} {sql_2}'
 
-        self._copy_item(origin_entry, new_entry, sql_insert)
+        self._copy_item(origin_entry, new_entry, sql_insert, table, primary_key)
 
     def save_sql(self, filename):
         with open(filename + '_sql.txt', 'a') as f:
@@ -197,10 +196,34 @@ class Mysql:
             self.gen_item_from_item_template('unk0')
         self.gen_csv_from_item()
 
+    # 合成宝石
+    def make_merge_jewel(self):
+        instance.copy_item(18262, 81000)
+        sql = '''
+            CREATE TABLE IF NOT EXISTS item_up(id INT UNSIGNED NOT NULL,id1 INT UNSIGNED,id2 INT UNSIGNED,amount INT UNSIGNED,amount1 INT UNSIGNED,amount2 INT UNSIGNED,upid INT UNSIGNED, PRIMARY KEY (id));
+            update item_template set class=12,quality=1,name='合成宝石',itemlevel=1,requiredlevel=1,buyprice=0,sellprice=0,spellid_1=13262 where entry=81000;
+        '''
+        self.execute_multi_sqls(sql)
+
+    def add_update_item(self):
+        # id, id1, id2, amount, amount1, amount2, upid
+        sql = '''
+            insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values(80002,80002,0,1,1,0,90000);
+            insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values(90000,90000,0,1,1,0,80002);
+        '''
+        self.execute_multi_sqls(sql)
+
 if __name__ == "__main__":
     instance = Mysql()
     # instance.copy_item(5201, 90000)
 
+    # 合成宝石
+    # instance.copy_item(18262, 81000)
     # instance.save_sql('item_template')
 
-    instance.gen_item_csv()
+    # instance.copy_item(95000, 95001, 'spell', 'id')
+    # instance.save_sql('spell')
+
+    instance.make_merge_jewel()
+    instance.add_update_item()
+    # instance.gen_item_csv()
