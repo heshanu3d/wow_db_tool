@@ -1,22 +1,30 @@
-import mysql.connector, csv
+import mysql.connector, csv, time
 from mysql.connector import Error
 from functools import wraps
 
-mysql_config_1 = {
+local_config_1 = {
     'host':'localhost',
     'user':'root',
     'password':'root',
     'database':'acore_world'
 }
 
-mysql_config_2 = {
+local_config_2 = {
     'host':'localhost',
     'user':'root',
     'password':'ascent',
     'database':'mangos_world'
 }
 
-mysql_configs = [mysql_config_1, mysql_config_2]
+remote_config_1 = {
+    'host':'192.168.71.71',
+    'user':'root',
+    'password':'root',
+    'database':'acore_world'
+}
+
+local_configs = [local_config_1, local_config_2]
+remote_configs = [remote_config_1]
 
 
 class Mysql:
@@ -27,7 +35,7 @@ class Mysql:
         self._cursor = None
         self._sqls = []
         self._entrys = []
-    def connect(self):
+    def connect(self, configs=remote_configs):
         def _connect(config):
             try:
                 self._connection = mysql.connector.connect(
@@ -50,7 +58,7 @@ class Mysql:
         if self._config:
             _connect(self._config)
         else:
-            for config in mysql_configs:
+            for config in configs:
                 if _connect(config):
                     break
 
@@ -58,6 +66,7 @@ class Mysql:
     def db_operation_decorator(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
+            start_time = time.time()
             self.connect()
             ret = None
             try:
@@ -73,6 +82,10 @@ class Mysql:
                     self._cursor.close()
                     self._connection.close()
                     # print("MySQL连接已关闭")
+            end_time = time.time()
+            delta_time = end_time - start_time
+            if delta_time > 0:
+                print(f'{func.__name__} 耗时 {delta_time}秒')
             return ret
         return wrapper
 
@@ -133,8 +146,8 @@ class Mysql:
                 self._cursor.execute(s.strip())
         self._connection.commit()
 
-    def gen_item_from_item_template(self):
-        sql = '''
+    def gen_item_from_item_template(self, SoundOverrideSubclass='SoundOverrideSubclass'):
+        sql = f'''
                 DROP TABLE IF EXISTS item;
                 CREATE TABLE IF NOT EXISTS item (
                     itemID INT(10) UNSIGNED NOT NULL,
@@ -152,7 +165,7 @@ class Mysql:
                 SELECT entry AS itemID,
                     Class AS ItemClass,
                     Subclass AS ItemSubClass,
-                    unk0 AS sound_override_subclassid,
+                    {SoundOverrideSubclass} AS sound_override_subclassid,
                     Material AS MaterialID,
                     DisplayId AS ItemDisplayInfo,
                     InventoryType AS InventorySlotID,
@@ -177,7 +190,11 @@ class Mysql:
                 writer.writerow(row)
 
     def gen_item_csv(self):
-        self.gen_item_from_item_template()
+        columns, _ = self.get_column_names_and_cnt('item_template')
+        if 'SoundOverrideSubclass' in columns:
+            self.gen_item_from_item_template()
+        else:
+            self.gen_item_from_item_template('unk0')
         self.gen_csv_from_item()
 
 if __name__ == "__main__":
@@ -187,4 +204,3 @@ if __name__ == "__main__":
     # instance.save_sql('item_template')
 
     instance.gen_item_csv()
-
