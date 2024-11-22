@@ -26,7 +26,8 @@ remote_config_1 = {
 local_configs = [local_config_1, local_config_2]
 remote_configs = [remote_config_1]
 
-# mysql_configs = local_configs
+# mysql_configs = remote_configs
+mysql_configs = local_configs
 
 class Mysql:
     def __init__(self):
@@ -81,10 +82,9 @@ class Mysql:
                 if self._connection and self._connection.is_connected():
                     self._cursor.close()
                     self._connection.close()
-                    # print("MySQL连接已关闭")
             end_time = time.time()
             delta_time = end_time - start_time
-            if delta_time > 0:
+            if delta_time > 0 and debug:
                 print(f'{func.__name__} 耗时 {delta_time}秒')
             return ret
         return wrapper
@@ -205,19 +205,48 @@ class Mysql:
         '''
         self.execute_multi_sqls(sql)
 
-    def add_update_item(self):
-        # id, id1, id2, amount, amount1, amount2, upid
-        sql = '''
-            insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values(80002,80002,0,1,1,0,90000);
-            insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values(90000,90000,0,1,1,0,80002);
+    @db_operation_decorator
+    def get_max_column_in_table(self, column='entry', table='item_template'):
+        self._cursor.execute(f'select max({column}) from {table};')
+        columns = self._cursor.fetchall()
+        return columns[0][0]
+
+    def multi_attr_value_in_item_template(self, entry, stat_rate=2,dmg_rate=1.4):
+        sql = f'''
+        UPDATE item_template SET stat_value1=stat_value1*{stat_rate},stat_value2=stat_value2*{stat_rate},stat_value3=stat_value3*{stat_rate},stat_value4=stat_value4*{stat_rate},stat_value5=stat_value5*{stat_rate},stat_value6=stat_value6*{stat_rate},stat_value7=stat_value7*{stat_rate},stat_value8=stat_value8*{stat_rate},stat_value9=stat_value9*{stat_rate},stat_value10=stat_value10*{stat_rate},dmg_min1=dmg_min1*{dmg_rate},dmg_max1=dmg_max1*{dmg_rate} WHERE entry={entry};
         '''
         self.execute_multi_sqls(sql)
 
-    def item_template_localeZH(self):
+    def update_tbl_item_up(self, old_entry, new_entry):
+        # id, id1, id2, amount, amount1, amount2, upid
+        sql = f'insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values({old_entry},{old_entry},0,1,1,0,{new_entry});'
+        self.execute_multi_sqls(sql)
+
+    # 1156， 90000
+    def add_update_item(self, old_entry, new_entry_ofs, max_up_cnt):
+        for i in range(max_up_cnt):
+            new_entry = new_entry_ofs + i
+            self.copy_item(old_entry, new_entry)
+            self.multi_attr_value_in_item_template(new_entry)
+            self.update_tbl_item_up(old_entry, new_entry)
+            old_entry = new_entry
+        return new_entry_ofs + max_up_cnt
+
+    @db_operation_decorator
+    def get_equipment_entry_by_quality(self, quality): # green : 2, blue : 3, purple : 4
+        self._cursor.execute(f'select entry from item_template where class in (2,4) and quality={quality};')
+        columns = self._cursor.fetchall()
+        return [column[0] for column in columns]
+
+    def item_template_localeZH_1(self):
         sql = 'UPDATE item_template AS it JOIN locales_item AS li ON it.entry = li.entry SET it.name = li.name_loc4;'
+        self.execute_multi_sqls(sql)
+    def item_template_localeZH_2(self):
+        sql = 'UPDATE item_template AS it JOIN item_template_locale AS itl ON it.entry = itl.id and itl.locale="zhCN" SET it.name = itl.name;'
         self.execute_multi_sqls(sql)
 
 if __name__ == "__main__":
+    debug = True
     instance = Mysql()
     # instance.copy_item(5201, 90000)
 
@@ -226,8 +255,23 @@ if __name__ == "__main__":
     # instance.make_merge_jewel()
     # instance.add_update_item()
 
-    # instance.item_template_localeZH()
-
+    # instance.item_template_localeZH_1()
+    # instance.item_template_localeZH_2()
 
     # instance.save_sql('item_template')
     # instance.gen_item_csv()
+
+    # print(instance.get_max_column_in_table())
+    # print(instance.get_equipment_entry_by_quality(4))
+
+    debug = False
+    new_entry_ofs = instance.get_max_column_in_table() + 1
+    # 蓝装最多强化到+3
+    for old_entry in instance.get_equipment_entry_by_quality(3):
+        new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 3)
+    # 紫装最多强化到+5
+    for old_entry in instance.get_equipment_entry_by_quality(4):
+        new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 5)
+    debug = True
+
+    instance.gen_item_csv()
