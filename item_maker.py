@@ -25,7 +25,8 @@ remote_config_1 = {
 
 local_configs = [local_config_1, local_config_2]
 remote_configs = [remote_config_1]
-# remote_configs = local_configs
+
+# mysql_configs = local_configs
 
 class Mysql:
     def __init__(self):
@@ -35,7 +36,7 @@ class Mysql:
         self._cursor = None
         self._sqls = []
         self._entrys = []
-    def connect(self, configs=remote_configs):
+    def connect(self, configs=mysql_configs):
         def _connect(config):
             try:
                 self._connection = mysql.connector.connect(
@@ -61,7 +62,6 @@ class Mysql:
             for config in configs:
                 if _connect(config):
                     break
-
 
     def db_operation_decorator(func):
         @wraps(func)
@@ -213,17 +213,21 @@ class Mysql:
         '''
         self.execute_multi_sqls(sql)
 
+    def item_template_localeZH(self):
+        sql = 'UPDATE item_template AS it JOIN locales_item AS li ON it.entry = li.entry SET it.name = li.name_loc4;'
+        self.execute_multi_sqls(sql)
+
 if __name__ == "__main__":
     instance = Mysql()
     # instance.copy_item(5201, 90000)
 
     # 合成宝石
     # instance.copy_item(18262, 81000)
+    # instance.make_merge_jewel()
+    # instance.add_update_item()
+
+    # instance.item_template_localeZH()
+
+
     # instance.save_sql('item_template')
-
-    # instance.copy_item(95000, 95001, 'spell', 'id')
-    # instance.save_sql('spell')
-
-    instance.make_merge_jewel()
-    instance.add_update_item()
     # instance.gen_item_csv()
