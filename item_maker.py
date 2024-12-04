@@ -245,7 +245,7 @@ class Mysql:
 
     @db_operation_decorator
     def get_origin_update_item_id(self):
-        self._cursor.execute(f'select id,upid from item_up where id < 60000;')
+        self._cursor.execute(f'select id from item_up where id < 60000;')
         columns = self._cursor.fetchall()
         return [column[0] for column in columns]
 
@@ -259,7 +259,7 @@ class Mysql:
             item_up[column[0]] = column[1]
         return item_up
 
-# 'select entry,name from item_template where entry>90000 and not name like "%+%";'
+    # 'select entry,name from item_template where entry>90000 and not name like "%+%";'
     def fix_upitem_name(self):
         item_up = self.get_item_up_dict()
 
@@ -274,7 +274,22 @@ class Mysql:
             self.execute_multi_sqls(sqls)
             if idx % 100 == 99:
                 print(__name__, f'execute {idx} items')
-
+    # 修改合成公式为 升级物品（+N）+原始物品 = 升级物品(+ N+1)
+    def modify_upitem_id1(self):
+        item_up = self.get_item_up_dict()
+        sqls = ''
+        for idx, id in enumerate(self.get_origin_update_item_id()):
+            upid = id
+            while upid in item_up.keys():
+                if id != upid:
+                    sqls += f'update item_up set id1={id} where id={upid};\n'
+                upid = item_up[upid]
+            # self.execute_multi_sqls(sqls)
+            if idx % 100 == 99:
+                print('modify_upitem_id1', f'execute {idx} items')
+        print(sqls)
+        print(len(sqls.split('\n')))
+        self.execute_multi_sqls(sqls)
 
     @db_operation_decorator
     def get_equipment_entry_by_quality(self, quality): # green : 2, blue : 3, purple : 4
@@ -305,6 +320,8 @@ def gen_item_update_v1(instance):
     debug = True
     instance.gen_item_csv()
 
+    instance.modify_upitem_id1()
+
 # 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
 def gen_item_update_v2(instance):
     debug = False
@@ -323,14 +340,15 @@ if __name__ == "__main__":
     instance = Mysql()
 
     # 合成宝石
-    instance.make_merge_jewel()
+    # instance.make_merge_jewel()
 
     # 汉化 item_template
     # instance.item_template_localeZH_1()
     # instance.item_template_localeZH_2()
 
     # gen_item_update_v1(instance)
-    gen_item_update_v2(instance)
+    # gen_item_update_v2(instance)
+    instance.modify_upitem_id1()
 
     # instance.save_sql('item_update')
 
