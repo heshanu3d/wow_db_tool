@@ -97,7 +97,7 @@ class Mysql:
         return '('+','.join(column_names)+')', len(column_names)
 
     @db_operation_decorator
-    def _copy_item(self, origin_entry, new_entry, sql, table='item_template', primary_key='entry'):
+    def _copy_item(self, origin_entry, new_entry, sql, table='item_template', primary_key='entry', gen_sql_mode=False):
         # 查询item_template表中指定entry的行，除了entry以外的所有列
         query_select = f'SELECT * FROM {table} WHERE {primary_key} = {origin_entry};'
         self._cursor.execute(query_select)
@@ -108,23 +108,25 @@ class Mysql:
             # 将result元组中的值（除了第一个值，即id）作为参数
             new_row = (new_entry,) + result[1:]
 
-            self._cursor.execute(sql, new_row)
-            self._connection.commit()
-            print(f'新行entry={new_entry}已成功插入。')
-            _i = sql.find('VALUES')
-            self._entrys.append(new_entry)
-            self._sqls.append(f'{sql[:_i]} VALUES{(*new_row,)};\n')
+            if not gen_sql_mode:
+                self._cursor.execute(sql, new_row)
+                self._connection.commit()
+                print(f'新行entry={new_entry}已成功插入。')
+            else:
+                _i = sql.find('VALUES')
+                self._entrys.append(new_entry)
+                self._sqls.append(f'{sql[:_i]} VALUES{(*new_row,)};\n')
         else:
             print(f'未找到entry={new_entry}的行!')
 
-    def copy_item(self, origin_entry, new_entry, table='item_template', primary_key='entry'):
+    def copy_item(self, origin_entry, new_entry, table='item_template', primary_key='entry', gen_sql_mode=False):
         s, c = self.get_column_names_and_cnt(table)
 
         sql_1 = f'INSERT INTO {table} {s}'
         sql_2 = 'VALUES (' + ','.join(['%s' for i in range(c)]) + ');'
         sql_insert = f'{sql_1} {sql_2}'
 
-        self._copy_item(origin_entry, new_entry, sql_insert, table, primary_key)
+        self._copy_item(origin_entry, new_entry, sql_insert, table, primary_key, gen_sql_mode=gen_sql_mode)
 
     def save_sql(self, filename):
         with open(filename + '_sql.txt', 'a') as f:
@@ -211,26 +213,35 @@ class Mysql:
         columns = self._cursor.fetchall()
         return columns[0][0]
 
-    def multi_attr_value_in_item_template(self, entry, stat_rate=2, dmg_rate=1.4):
+    def multi_attr_value_in_item_template(self, entry, stat_rate=2, dmg_rate=1.4, gen_sql_mode=False):
         sql = f'''
         UPDATE item_template SET stat_value1=stat_value1*{stat_rate},stat_value2=stat_value2*{stat_rate},stat_value3=stat_value3*{stat_rate},stat_value4=stat_value4*{stat_rate},stat_value5=stat_value5*{stat_rate},stat_value6=stat_value6*{stat_rate},stat_value7=stat_value7*{stat_rate},stat_value8=stat_value8*{stat_rate},stat_value9=stat_value9*{stat_rate},stat_value10=stat_value10*{stat_rate},dmg_min1=dmg_min1*{dmg_rate},dmg_max1=dmg_max1*{dmg_rate} WHERE entry={entry};
         '''
-        self.execute_multi_sqls(sql)
+        if not gen_sql_mode:
+            self.execute_multi_sqls(sql)
+        else:
+            self._sqls.append(f'{sql}\n')
 
-    def update_tbl_item_up(self, old_entry, new_entry):
+    def update_tbl_item_up(self, old_entry, new_entry, gen_sql_mode=False):
         # id, id1, id2, amount, amount1, amount2, upid
         sql = f'insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values({old_entry},{old_entry},0,1,1,0,{new_entry});'
-        self.execute_multi_sqls(sql)
+        if not gen_sql_mode:
+            self.execute_multi_sqls(sql)
+        else:
+            self._sqls.append(f'{sql}\n')
 
     # 1156， 90000
-    def add_update_item(self, old_entry, new_entry_ofs, max_up_cnt):
+    def add_update_item(self, old_entry, new_entry_ofs, max_up_cnt, gen_sql_mode=False):
         for i in range(max_up_cnt):
             new_entry = new_entry_ofs + i
-            self.copy_item(old_entry, new_entry)
-            self.multi_attr_value_in_item_template(new_entry)
-            self.update_tbl_item_up(old_entry, new_entry)
+            self.copy_item(old_entry, new_entry, gen_sql_mode=gen_sql_mode)
+            self.multi_attr_value_in_item_template(new_entry, gen_sql_mode=gen_sql_mode)
+            self.update_tbl_item_up(old_entry, new_entry, gen_sql_mode=gen_sql_mode)
             old_entry = new_entry
         return new_entry_ofs + max_up_cnt
+    
+    def gen_add_update_item_sql(self, old_entry, new_entry_ofs, max_up_cnt):
+        self.add_update_item(old_entry, new_entry_ofs, max_up_cnt, gen_sql_mode=True)
 
     @db_operation_decorator
     def get_origin_update_item_id(self):
@@ -278,39 +289,49 @@ class Mysql:
         sql = 'UPDATE item_template AS it JOIN item_template_locale AS itl ON it.entry = itl.id and itl.locale="zhCN" SET it.name = itl.name;'
         self.execute_multi_sqls(sql)
 
+# 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
+def gen_item_update_v1(instance):
+    debug = False
+    new_entry_ofs = instance.get_max_column_in_table() + 1
+    # 蓝装最多强化到+3
+    for old_entry in instance.get_equipment_entry_by_quality(3):
+        new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 3)
+    # 紫装最多强化到+5
+    for old_entry in instance.get_equipment_entry_by_quality(4):
+        new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 5)
+    
+    # 修复强化装备的名字: 原始名字->原始名字+强化等级， 如：豪华珠宝戒指+1，豪华珠宝戒指+2，豪华珠宝戒指+3，etc...
+    instance.fix_upitem_name()
+    debug = True
+    instance.gen_item_csv()
+
+# 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
+def gen_item_update_v2(instance):
+    debug = False
+    new_entry_ofs = instance.get_max_column_in_table() + 1
+    # 蓝装最多强化到+3
+    for old_entry in instance.get_equipment_entry_by_quality(3):
+        new_entry_ofs = instance.gen_add_update_item_sql(old_entry, new_entry_ofs, 3)
+    # 紫装最多强化到+5
+    for old_entry in instance.get_equipment_entry_by_quality(4):
+        new_entry_ofs = instance.gen_add_update_item_sql(old_entry, new_entry_ofs, 5)
+
+    debug = True
+
 if __name__ == "__main__":
     debug = True
     instance = Mysql()
-    # instance.copy_item(5201, 90000)
 
     # 合成宝石
-    # instance.copy_item(18262, 81000)
-    # instance.make_merge_jewel()
-    # instance.add_update_item()
+    instance.make_merge_jewel()
 
+    # 汉化 item_template
     # instance.item_template_localeZH_1()
     # instance.item_template_localeZH_2()
 
-    # instance.save_sql('item_template')
-    # instance.gen_item_csv()
+    # gen_item_update_v1(instance)
+    gen_item_update_v2(instance)
 
-    # print(instance.get_max_column_in_table())
-    # print(instance.get_equipment_entry_by_quality(4))
-
-    # 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
-    # debug = False
-    # new_entry_ofs = instance.get_max_column_in_table() + 1
-    # # 蓝装最多强化到+3
-    # for old_entry in instance.get_equipment_entry_by_quality(3):
-    #     new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 3)
-    # # 紫装最多强化到+5
-    # for old_entry in instance.get_equipment_entry_by_quality(4):
-    #     new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 5)
-    # debug = True
-
-    # 修复强化装备的名字: 原始名字->原始名字+强化等级， 如：豪华珠宝戒指+1，豪华珠宝戒指+2，豪华珠宝戒指+3，etc...
-    # debug = False
-    # instance.fix_upitem_name()
-    # debug = True
+    # instance.save_sql('item_update')
 
     # instance.gen_item_csv()
