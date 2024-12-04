@@ -211,7 +211,7 @@ class Mysql:
         columns = self._cursor.fetchall()
         return columns[0][0]
 
-    def multi_attr_value_in_item_template(self, entry, stat_rate=2,dmg_rate=1.4):
+    def multi_attr_value_in_item_template(self, entry, stat_rate=2, dmg_rate=1.4):
         sql = f'''
         UPDATE item_template SET stat_value1=stat_value1*{stat_rate},stat_value2=stat_value2*{stat_rate},stat_value3=stat_value3*{stat_rate},stat_value4=stat_value4*{stat_rate},stat_value5=stat_value5*{stat_rate},stat_value6=stat_value6*{stat_rate},stat_value7=stat_value7*{stat_rate},stat_value8=stat_value8*{stat_rate},stat_value9=stat_value9*{stat_rate},stat_value10=stat_value10*{stat_rate},dmg_min1=dmg_min1*{dmg_rate},dmg_max1=dmg_max1*{dmg_rate} WHERE entry={entry};
         '''
@@ -231,6 +231,39 @@ class Mysql:
             self.update_tbl_item_up(old_entry, new_entry)
             old_entry = new_entry
         return new_entry_ofs + max_up_cnt
+
+    @db_operation_decorator
+    def get_origin_update_item_id(self):
+        self._cursor.execute(f'select id,upid from item_up where id < 60000;')
+        columns = self._cursor.fetchall()
+        return [column[0] for column in columns]
+
+    # {id : upid, ...}
+    @db_operation_decorator
+    def get_item_up_dict(self):
+        self._cursor.execute(f'select id,upid from item_up;')
+        columns = self._cursor.fetchall()
+        item_up = {}
+        for column in columns:
+            item_up[column[0]] = column[1]
+        return item_up
+
+# 'select entry,name from item_template where entry>90000 and not name like "%+%";'
+    def fix_upitem_name(self):
+        item_up = self.get_item_up_dict()
+
+        for idx, id in enumerate(self.get_origin_update_item_id()):
+            upid = id
+            lvl = 0
+            sqls = ''
+            while upid in item_up.keys():
+                upid = item_up[upid]
+                lvl += 1
+                sqls += f'update item_template set name=concat(name,"+{lvl}") where entry={upid};'
+            self.execute_multi_sqls(sqls)
+            if idx % 100 == 99:
+                print(__name__, f'execute {idx} items')
+
 
     @db_operation_decorator
     def get_equipment_entry_by_quality(self, quality): # green : 2, blue : 3, purple : 4
@@ -264,14 +297,20 @@ if __name__ == "__main__":
     # print(instance.get_max_column_in_table())
     # print(instance.get_equipment_entry_by_quality(4))
 
-    debug = False
-    new_entry_ofs = instance.get_max_column_in_table() + 1
-    # 蓝装最多强化到+3
-    for old_entry in instance.get_equipment_entry_by_quality(3):
-        new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 3)
-    # 紫装最多强化到+5
-    for old_entry in instance.get_equipment_entry_by_quality(4):
-        new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 5)
-    debug = True
+    # 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
+    # debug = False
+    # new_entry_ofs = instance.get_max_column_in_table() + 1
+    # # 蓝装最多强化到+3
+    # for old_entry in instance.get_equipment_entry_by_quality(3):
+    #     new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 3)
+    # # 紫装最多强化到+5
+    # for old_entry in instance.get_equipment_entry_by_quality(4):
+    #     new_entry_ofs = instance.add_update_item(old_entry, new_entry_ofs, 5)
+    # debug = True
 
-    instance.gen_item_csv()
+    # 修复强化装备的名字: 原始名字->原始名字+强化等级， 如：豪华珠宝戒指+1，豪华珠宝戒指+2，豪华珠宝戒指+3，etc...
+    # debug = False
+    # instance.fix_upitem_name()
+    # debug = True
+
+    # instance.gen_item_csv()
