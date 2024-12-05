@@ -347,6 +347,12 @@ def remove_dungeon_requirements(instance):
     instance.backup_table('dungeon_access_requirements')
     instance.clear_table_content('dungeon_access_requirements')
 
+# 去掉装备和武器的唯一属性
+def remove_unique_attr_on_equip(instance):
+    sql = 'update item_template set maxcount=0 where class in (2,4) and maxcount=1;'
+    instance.execute_multi_sqls(sql)
+
+
 if __name__ == "__main__":
     debug = True
     instance = Mysql()
@@ -361,7 +367,8 @@ if __name__ == "__main__":
     # gen_item_update_v1(instance)
     # gen_item_update_v2(instance)
 
-    remove_dungeon_requirements(instance)
+    # remove_dungeon_requirements(instance)
+    remove_unique_attr_on_equip(instance)
 
     # instance.save_sql('item_update')
 
