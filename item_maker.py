@@ -303,6 +303,13 @@ class Mysql:
     def item_template_localeZH_2(self):
         sql = 'UPDATE item_template AS it JOIN item_template_locale AS itl ON it.entry = itl.id and itl.locale="zhCN" SET it.name = itl.name;'
         self.execute_multi_sqls(sql)
+    
+    def backup_table(self, table):
+        sql = f'CREATE TABLE {table}_b AS SELECT * FROM {table};'
+        self.execute_multi_sqls(sql)
+    def clear_table_content(self, table):
+        sql = f'DELETE FROM {table};'
+        self.execute_multi_sqls(sql)
 
 # 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
 def gen_item_update_v1(instance):
@@ -335,6 +342,11 @@ def gen_item_update_v2(instance):
 
     debug = True
 
+# 取消副本进入限制(成就、任务、物品)
+def remove_dungeon_requirements(instance):
+    instance.backup_table('dungeon_access_requirements')
+    instance.clear_table_content('dungeon_access_requirements')
+
 if __name__ == "__main__":
     debug = True
     instance = Mysql()
@@ -348,7 +360,8 @@ if __name__ == "__main__":
 
     # gen_item_update_v1(instance)
     # gen_item_update_v2(instance)
-    instance.modify_upitem_id1()
+
+    remove_dungeon_requirements(instance)
 
     # instance.save_sql('item_update')
 
