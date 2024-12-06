@@ -1,4 +1,4 @@
-import mysql.connector, csv, time
+import mysql.connector, csv, time, re
 from mysql.connector import Error
 from functools import wraps
 
@@ -94,19 +94,39 @@ class Mysql:
         self._cursor.execute(f'SHOW COLUMNS FROM {table}')
         columns = self._cursor.fetchall()
         column_names = [column[0] for column in columns]
-        return '('+','.join(column_names)+')', len(column_names)
+        return column_names
 
     @db_operation_decorator
-    def _copy_item(self, origin_entry, new_entry, sql, table='item_template', primary_key='entry', gen_sql_mode=False):
-        # 查询item_template表中指定entry的行，除了entry以外的所有列
-        query_select = f'SELECT * FROM {table} WHERE {primary_key} = {origin_entry};'
-        self._cursor.execute(query_select)
-        result = self._cursor.fetchone()
+    def _copy_item(self, origin_entry, new_entry, sql, modify, last_result, table='item_template', primary_key='entry', gen_sql_mode=False):
+        if len(last_result) == 0:
+            # 查询item_template表中指定entry的行，除了entry以外的所有列
+            query_select = f'SELECT * FROM {table} WHERE {primary_key} = {origin_entry};'
+            self._cursor.execute(query_select)
+            result = self._cursor.fetchone()
+        else:
+            result = last_result[1]
 
         if result:
-            # 插入新行，entry设置为60000，其他列与id=20的行相同
-            # 将result元组中的值（除了第一个值，即id）作为参数
-            new_row = (new_entry,) + result[1:]
+            _result = list(result)
+            if len(modify) > 0:
+                for mod in modify:
+                    if len(mod) == 2:
+                        _result[mod[0]] = mod[1]
+                    elif len(mod) == 3:
+                        if mod[2].startswith('plus'):
+                            _result[mod[0]] += mod[1]
+                        elif mod[2].startswith('multi'):
+                            _result[mod[0]] *= mod[1]
+                        elif mod[2].startswith('compo_multi'):
+                            _result[mod[0]] = (_result[mod[0]] + 1) * mod[1] - 1
+                        elif mod[2].startswith('add_update_suffix'):
+                            _result[mod[0]] = re.sub(r"\+(\d+)", "{}".format(mod[1]), _result[mod[0]])
+                        elif mod[2].startswith('digit_in_str_multi'):
+                            def multiply_digits(match):
+                                return str(int(match.group(0)) * mod[1])
+                            _result[mod[0]] = re.sub(r'\d+', multiply_digits, _result[mod[0]])
+
+            new_row = tuple(_result)
 
             if not gen_sql_mode:
                 self._cursor.execute(sql, new_row)
@@ -116,17 +136,35 @@ class Mysql:
                 _i = sql.find('VALUES')
                 self._entrys.append(new_entry)
                 self._sqls.append(f'{sql[:_i]} VALUES{(*new_row,)};\n')
+            return f'{sql[:_i]} VALUES{(*new_row,)};\n', new_row
         else:
             print(f'未找到entry={new_entry}的行!')
+            return "", ()
 
-    def copy_item(self, origin_entry, new_entry, table='item_template', primary_key='entry', gen_sql_mode=False):
-        s, c = self.get_column_names_and_cnt(table)
+    # modify = [['id',3], ['type',5]] 表示把复制的结果集里的id列的值改为3，type列的值改为5
+    def copy_item(self, origin_entry, new_entry, modify:list=[], last_result:tuple=(), table='item_template', primary_key='entry', gen_sql_mode=False):
+        if len(last_result) == 0:
+            column_names = self.get_column_names_and_cnt(table)
+        else:
+            column_names = last_result[2]
+        s = '('+','.join(column_names)+')'
+        c = len(column_names)
+
+        modify.append([primary_key, new_entry])
+        column_names_dict = {item.lower(): idx for idx, item in enumerate(column_names)}
+        for mod in modify:
+            col = mod[0].lower()
+            val = mod[1]
+            if col in column_names_dict.keys():
+                mod[0] = column_names_dict[col]
+        
 
         sql_1 = f'INSERT INTO {table} {s}'
         sql_2 = 'VALUES (' + ','.join(['%s' for i in range(c)]) + ');'
         sql_insert = f'{sql_1} {sql_2}'
 
-        self._copy_item(origin_entry, new_entry, sql_insert, table, primary_key, gen_sql_mode=gen_sql_mode)
+        _sql, _vals = self._copy_item(origin_entry, new_entry, sql_insert, modify, last_result, table, primary_key, gen_sql_mode=gen_sql_mode)
+        return _sql, _vals, column_names
 
     def save_sql(self, filename):
         with open(filename + '_sql.txt', 'a') as f:
@@ -140,7 +178,7 @@ class Mysql:
     def execute_multi_sqls(self, sqls):
         if isinstance(sqls, list):
             for sql in sqls:
-                for s in sqls.split(';'):
+                for s in sql.split(';'):
                     self._cursor.execute(s.strip())                
         else:
             for s in sqls.split(';'):
@@ -176,11 +214,11 @@ class Mysql:
         self.execute_multi_sqls(sql)
 
     @db_operation_decorator
-    def gen_csv_from_item(self):
-        sql = 'select * from item;'
+    def gen_csv_from_table(self, table):
+        sql = f'select * from {table};'
         self._cursor.execute(sql)
         column_names = [i[0] for i in self._cursor.description]
-        with open('item.csv', mode='w', newline='', encoding='utf-8') as f:
+        with open(f'{table}.csv', mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
 
             # 写入列名
@@ -191,12 +229,20 @@ class Mysql:
                 writer.writerow(row)
 
     def gen_item_csv(self):
-        columns, _ = self.get_column_names_and_cnt('item_template')
+        column_names = self.get_column_names_and_cnt('item_template')
+        columns = '('+','.join(column_names)+')'
+
         if 'SoundOverrideSubclass' in columns:
             self.gen_item_from_item_template()
         else:
             self.gen_item_from_item_template('unk0')
-        self.gen_csv_from_item()
+        self.gen_csv_from_table('item')
+    
+    def gen_sqlfile_from_sqls(self, filename, sqls:list):
+        with open(filename+'.sql', 'w', encoding='utf-8') as f:
+            f.writelines(sqls)
+        print(f'use cmd to import {filename}.sql into mysql:')
+        print(f'    mysql -u root -p acore_world < {filename}.sql')
 
     # 合成宝石
     def make_merge_jewel(self):
@@ -222,13 +268,14 @@ class Mysql:
         else:
             self._sqls.append(f'{sql}\n')
 
-    def update_tbl_item_up(self, old_entry, new_entry, gen_sql_mode=False):
+    def update_tbl_item_up(self, id, id1, new_entry, gen_sql_mode=False):
         # id, id1, id2, amount, amount1, amount2, upid
-        sql = f'insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values({old_entry},{old_entry},0,1,1,0,{new_entry});'
+        sql = f'insert into item_up(id,id1,id2,amount,amount1,amount2,upid) values({id},{id1},0,1,1,0,{new_entry});'
         if not gen_sql_mode:
             self.execute_multi_sqls(sql)
         else:
             self._sqls.append(f'{sql}\n')
+        return sql
 
     # 1156， 90000
     def add_update_item(self, old_entry, new_entry_ofs, max_up_cnt, gen_sql_mode=False):
@@ -236,7 +283,7 @@ class Mysql:
             new_entry = new_entry_ofs + i
             self.copy_item(old_entry, new_entry, gen_sql_mode=gen_sql_mode)
             self.multi_attr_value_in_item_template(new_entry, gen_sql_mode=gen_sql_mode)
-            self.update_tbl_item_up(old_entry, new_entry, gen_sql_mode=gen_sql_mode)
+            self.update_tbl_item_up(old_entry, old_entry, new_entry, gen_sql_mode=gen_sql_mode)
             old_entry = new_entry
         return new_entry_ofs + max_up_cnt
     
@@ -296,6 +343,19 @@ class Mysql:
         self._cursor.execute(f'select entry from item_template where class in (2,4) and quality={quality};')
         columns = self._cursor.fetchall()
         return [column[0] for column in columns]
+
+    @db_operation_decorator
+    def get_entry_of_jewel_needs_updated(self, quality):
+        sql = f'''
+            select i.entry,i.GemProperties,gem.SpellItemEnchantmentRef
+            from item_template i
+            left join GemProperties gem on gem.id=i.GemProperties 
+            where class = 3 and Quality = {quality} and i.GemProperties!=0;
+        '''
+        self._cursor.execute(sql)
+        columns = self._cursor.fetchall()
+        return columns
+        # return [(column[0]) for column in columns]
 
     def item_template_localeZH_1(self):
         sql = 'UPDATE item_template AS it JOIN locales_item AS li ON it.entry = li.entry SET it.name = li.name_loc4;'
@@ -384,6 +444,81 @@ def multi_effect_on_potion(instance, multi):
     '''
     instance.execute_multi_sqls(sql)
 
+# 生成蓝宝石、紫宝石的强化+1 -> +5的 item_template、gemproperties、spellitemenchantment和item_up 信息
+def gen_jewel_update(instance, rate:int):
+    item_template_sqls = []
+    item_up_sqls = []
+
+    def _gen_jewel_update(quality, max_up_cnt):
+        new_entry_ofs_item_template = instance.get_max_column_in_table(column='entry', table='item_template') + 1
+        new_entry_ofs_GemProperties = instance.get_max_column_in_table(column='id', table='GemProperties') + 1
+        new_entry_ofs_spellitemenchantment = instance.get_max_column_in_table(column='id', table='spellitemenchantment') + 1
+        # 蓝宝石
+        x = 0
+        for entry in instance.get_entry_of_jewel_needs_updated(quality):
+            x += 1
+            old_entry_spellitemenchantment = entry[2]
+            old_entry_GemProperties = entry[1]
+            old_entry_item_template = entry[0]
+
+            old_entry_sp = old_entry_spellitemenchantment
+            old_entry_ge = old_entry_GemProperties
+            old_entry_it = old_entry_item_template
+
+            last_result_sp = ()
+            last_result_ge = ()
+            last_result_it = ()
+
+            for i in range(max_up_cnt):
+                new_entry_sp = new_entry_ofs_spellitemenchantment + i
+                new_entry_ge = new_entry_ofs_GemProperties + i
+                new_entry_it = new_entry_ofs_item_template + i
+
+                mod_sp = [
+                    ['minAmount1',rate,'multi'],['maxAmount1',rate,'multi'],
+                    ['minAmount2',rate,'multi'],['maxAmount2',rate,'multi'],
+                    ['minAmount3',rate,'multi'],['maxAmount3',rate,'multi'],
+                    ['sRefName4',rate,'digit_in_str_multi']
+                ]
+                last_result_sp = instance.copy_item(old_entry_sp, new_entry_sp, modify=mod_sp, last_result=last_result_sp, table='spellitemenchantment', primary_key='id', gen_sql_mode=True)
+
+                mod_ge = [['SpellItemEnchantmentRef',new_entry_sp]]
+                last_result_ge = instance.copy_item(old_entry_ge, new_entry_ge, modify=mod_ge, last_result=last_result_ge, table='GemProperties', primary_key='id', gen_sql_mode=True)
+
+                mod_it = [['GemProperties',new_entry_ge],['name',f'+{i+1}','add_update_suffix' if i else 'plus']]
+                last_result_it = instance.copy_item(old_entry_it, new_entry_it, modify=mod_it, last_result=last_result_it, table='item_template', primary_key='entry', gen_sql_mode=True)
+                item_template_sqls.append(last_result_it[0])
+
+                sql = instance.update_tbl_item_up(old_entry_it, old_entry_item_template, new_entry_it, gen_sql_mode=True)
+                item_up_sqls.append(sql)
+
+                old_entry_sp = new_entry_sp
+                old_entry_ge = new_entry_ge
+                old_entry_it = new_entry_it
+
+            new_entry_ofs_spellitemenchantment += max_up_cnt
+            new_entry_ofs_GemProperties += max_up_cnt
+            new_entry_ofs_item_template += max_up_cnt
+
+            # for sql in instance._sqls:
+            #     print(sql)
+            if x % 5 == 0:
+                print('---已完成',x,f'{"蓝色" if quality==2 else "紫色"}宝石---')
+
+    # 蓝色宝石(2), 最多强化到+3
+    _gen_jewel_update(2, 3)
+    # 紫色宝石(3), 最多强化到+5
+    _gen_jewel_update(3, 5)
+
+    instance.gen_sqlfile_from_sqls('item_template', item_template_sqls)
+    instance.gen_sqlfile_from_sqls('item_up', item_up_sqls)
+    instance.gen_sqlfile_from_sqls('all', instance._sqls)
+
+    # instance.execute_multi_sqls(instance._sqls)
+
+    exit()
+
+
 if __name__ == "__main__":
     debug = True
     instance = Mysql()
@@ -395,13 +530,25 @@ if __name__ == "__main__":
     # instance.item_template_localeZH_1()
     # instance.item_template_localeZH_2()
 
+    # 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
     # gen_item_update_v1(instance)
     # gen_item_update_v2(instance)
 
+    # 取消副本进入限制(成就、任务、物品)
     # remove_dungeon_requirements(instance)
+
+    # 去掉装备和武器的唯一属性
     # remove_unique_attr_on_equip(instance)
-    multi_effect_on_scroll(instance, 5)
-    multi_effect_on_potion(instance, 25)
+    
+    # 5倍率 放大 卷轴效果
+    # multi_effect_on_scroll(instance, 5)
+
+    # 25倍率 放大 卷轴效果
+    # multi_effect_on_potion(instance, 25)
+
+    # 生成蓝宝石、紫宝石的强化+1 -> +5的 item_template、gemproperties、spellitemenchantment和item_up 信息
+    debug = False
+    gen_jewel_update(instance, 2)
 
     # instance.save_sql('item_update')
 
