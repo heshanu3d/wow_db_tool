@@ -352,6 +352,37 @@ def remove_unique_attr_on_equip(instance):
     sql = 'update item_template set maxcount=0 where class in (2,4) and maxcount=1;'
     instance.execute_multi_sqls(sql)
 
+# x倍率 放大 卷轴效果
+def multi_effect_on_scroll(instance, multi):
+    sql = f'''
+            update spell s set s.EffectBasePoints1=(s.EffectBasePoints1+1)*{multi}-1
+            WHERE EXISTS (
+                SELECT 1 FROM item_template it
+                WHERE s.id = it.spellid_1 and s.Effectbasepoints1!=-1 and s.Effectbasepoints1!=0 and it.class=0 and it.subclass=4
+            );
+    '''
+    instance.execute_multi_sqls(sql)
+
+# x倍率 放大 药剂效果
+def multi_effect_on_potion(instance, multi):
+    sql = f'''
+            update spell s set s.EffectBasePoints1=(s.EffectBasePoints1+1)*{multi}-1
+            WHERE EXISTS (
+                SELECT 1 FROM item_template it
+                WHERE s.id = it.spellid_1 and s.Effectbasepoints1!=-1 and s.Effectbasepoints1!=0 and it.class=0 and it.subclass=2
+            );
+            update spell s set EffectBasePoints2=(EffectBasePoints2+1)*{multi}-1
+            WHERE EXISTS (
+                SELECT 1 FROM item_template it
+                WHERE s.id = it.spellid_1 and s.EffectBasePoints2!=-1 and s.EffectBasePoints2!=0 and it.class=0 and it.subclass=2
+            );
+            update spell s set EffectBasePoints3=(EffectBasePoints3+1)*{multi}-1
+            WHERE EXISTS (
+                SELECT 1 FROM item_template it
+                WHERE s.id = it.spellid_1 and s.EffectBasePoints3!=-1 and s.EffectBasePoints3!=0 and it.class=0 and it.subclass=2
+            );
+    '''
+    instance.execute_multi_sqls(sql)
 
 if __name__ == "__main__":
     debug = True
@@ -368,7 +399,9 @@ if __name__ == "__main__":
     # gen_item_update_v2(instance)
 
     # remove_dungeon_requirements(instance)
-    remove_unique_attr_on_equip(instance)
+    # remove_unique_attr_on_equip(instance)
+    multi_effect_on_scroll(instance, 5)
+    multi_effect_on_potion(instance, 25)
 
     # instance.save_sql('item_update')
 
