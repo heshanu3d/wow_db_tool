@@ -104,6 +104,7 @@ class Mysql:
             self._cursor.execute(query_select)
             result = self._cursor.fetchone()
         else:
+            query_select=''
             result = last_result[1]
 
         if result:
@@ -138,7 +139,8 @@ class Mysql:
                 self._sqls.append(f'{sql[:_i]} VALUES{(*new_row,)};\n')
             return f'{sql[:_i]} VALUES{(*new_row,)};\n', new_row
         else:
-            print(f'未找到entry={new_entry}的行!')
+            print(f'未找到entry={new_entry}的行!  请检查 查询语句:')
+            print(f'    {query_select}')
             return "", ()
 
     # modify = [['id',3], ['type',5]] 表示把复制的结果集里的id列的值改为3，type列的值改为5
@@ -242,7 +244,7 @@ class Mysql:
         with open(filename+'.sql', 'w', encoding='utf-8') as f:
             f.writelines(sqls)
         print(f'use cmd to import {filename}.sql into mysql:')
-        print(f'    mysql -u root -p acore_world < {filename}.sql')
+        print(f'    mysql -u root --password=root acore_world < {filename}.sql')
 
     # 合成宝石
     def make_merge_jewel(self):
@@ -350,7 +352,7 @@ class Mysql:
             select i.entry,i.GemProperties,gem.SpellItemEnchantmentRef
             from item_template i
             left join GemProperties gem on gem.id=i.GemProperties 
-            where class = 3 and Quality = {quality} and i.GemProperties!=0;
+            where class = 3 and Quality = {quality} and i.GemProperties!=0 and gem.SpellItemEnchantmentRef!=0;
         '''
         self._cursor.execute(sql)
         columns = self._cursor.fetchall()
@@ -449,10 +451,15 @@ def gen_jewel_update(instance, rate:int):
     item_template_sqls = []
     item_up_sqls = []
 
+    new_entry_ofs_item_template = instance.get_max_column_in_table(column='entry', table='item_template') + 1
+    new_entry_ofs_GemProperties = instance.get_max_column_in_table(column='id', table='GemProperties') + 1
+    new_entry_ofs_spellitemenchantment = instance.get_max_column_in_table(column='id', table='spellitemenchantment') + 1
+
     def _gen_jewel_update(quality, max_up_cnt):
-        new_entry_ofs_item_template = instance.get_max_column_in_table(column='entry', table='item_template') + 1
-        new_entry_ofs_GemProperties = instance.get_max_column_in_table(column='id', table='GemProperties') + 1
-        new_entry_ofs_spellitemenchantment = instance.get_max_column_in_table(column='id', table='spellitemenchantment') + 1
+        nonlocal new_entry_ofs_item_template
+        nonlocal new_entry_ofs_GemProperties
+        nonlocal new_entry_ofs_spellitemenchantment
+
         # 蓝宝石
         x = 0
         for entry in instance.get_entry_of_jewel_needs_updated(quality):
@@ -516,8 +523,27 @@ def gen_jewel_update(instance, rate:int):
 
     # instance.execute_multi_sqls(instance._sqls)
 
-    exit()
+# 删除 数据库中所有 强化蓝宝石、强化紫宝石的信息： item_template、gemproperties、spellitemenchantment和item_up
+# linux端只用删除item_template和item_up 相关内容，因为不做开发环境不导入的话就没有另外两个表的数据
+def del_update_jewel_dbinfo(instance):
+    sql = '''
+        delete s from spellitemenchantment s
+        LEFT JOIN GemProperties g ON s.id = g.SpellItemEnchantmentRef
+        LEFT JOIN item_template i ON g.id = i.GemProperties
+        WHERE i.class = 3 AND i.Quality IN (2, 3) AND i.name LIKE "%+%";
 
+        delete g from gemproperties g
+        LEFT JOIN item_template i ON g.id = i.GemProperties
+        WHERE i.class = 3 AND i.Quality IN (2, 3) AND i.name LIKE "%+%";
+
+        delete u from item_up u
+        LEFT JOIN item_template i ON i.entry = u.upid
+        WHERE i.class = 3 AND i.Quality IN (2, 3) AND i.name LIKE "%+%";
+
+        delete i from item_template i
+        WHERE i.class = 3 AND i.Quality IN (2, 3) AND i.name LIKE "%+%";
+    '''
+    instance.execute_multi_sqls(sql)
 
 if __name__ == "__main__":
     debug = True
@@ -546,9 +572,13 @@ if __name__ == "__main__":
     # 25倍率 放大 卷轴效果
     # multi_effect_on_potion(instance, 25)
 
-    # 生成蓝宝石、紫宝石的强化+1 -> +5的 item_template、gemproperties、spellitemenchantment和item_up 信息
     debug = False
-    gen_jewel_update(instance, 2)
+
+    # 删除强化蓝宝石、黄宝石信息
+    # del_update_jewel_dbinfo(instance)
+
+    # 生成蓝宝石、紫宝石的强化+1 -> +5的 item_template、gemproperties、spellitemenchantment和item_up 信息
+    # gen_jewel_update(instance, 2)
 
     # instance.save_sql('item_update')
 
