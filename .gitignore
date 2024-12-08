@@ -2,3 +2,4 @@
 *.txt
 *.dbc
 *.sql
+__pycache__
