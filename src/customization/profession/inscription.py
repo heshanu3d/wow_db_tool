@@ -1,4 +1,14 @@
-
+class Helper:
+    def __init__(self, instance):
+        self._instance = instance
+    # 查找跟大师的xx铭文相关的spellitemenchant，方便倍率修改该附魔数值
+    def find_master_inspiration(self):
+        sql = """
+            select s.id,s.SpellName4,s.SpellDescription4,s.Effect1,s.EffectMiscValue1,sRefName4,minAmount1,maxAmount1,minAmount2,maxAmount2,minAmount3,maxAmount3 from spell s
+            left join spellitemenchantment sp on s.EffectMiscValue1=sp.id
+            where s.Spellname4 like "大师的%铭文" and s.Effect1=53;
+        """
+        self._instance.fast_select(sql)
 
 # x倍率 放大 卷轴效果
 def multi_effect_on_scroll(instance, multi):
@@ -18,27 +28,33 @@ def multi_effect_on_scroll(instance, multi):
 # 61120	大师的风暴铭文	53	3838	+210法术强度，+45 爆击等级	210	210	45	45	0	0
 def muiti_master_inspiration(instance, rate):
     sql = '''
-        select s.EffectMiscValue1,sRefName4 from spell s
+        select s.id,s.EffectMiscValue1,sRefName4 from spell s
         left join spellitemenchantment sp on s.EffectMiscValue1=sp.id
         where s.Spellname4 like "大师的%铭文" and s.Effect1=53;
     '''
 
-    options = [
+    options_spim = [
         ['minAmount1',rate,'multi'],['maxAmount1',rate,'multi'],
         ['minAmount2',rate,'multi'],['maxAmount2',rate,'multi'],
         ['minAmount3',rate,'multi'],['maxAmount3',rate,'multi'],
         ['sRefName4',rate,'digit_in_str_multi']
     ]
+    options_sp = [
+        ['SpellDescription4',rate,'digit_in_str_multi']
+    ]
 
     gen_sqls = []
-    results = instance.execute_sql_with_ret(sql)
-    for id in [result[0] for result in results]:
-        gen_sqls.append(instance.update_item(id, options=options, table='spellitemenchantment', primary_key='id', gen_sql_mode=True))
+    results, _ = instance.execute_sql_with_ret(sql)
+    for ids in results:
+        id_spell = ids[0]
+        id_EffectMisc = ids[1]
+        # gen_sqls.append(instance.update_item(id_EffectMisc, options=options_spim, table='spellitemenchantment', primary_key='id', gen_sql_mode=True))
+        gen_sqls.append(instance.update_item(id_spell,      options=options_sp,   table='spell',                primary_key='id', gen_sql_mode=True))
     
     # instance.execute_multi_sqls(gen_sqls)
     # for sql in gen_sqls:
     #     print(sql)
-    print(f"{__name__:<45}generate dbc from tbl spellitemenchantment and replace the corresponding server's dbc file and client's mpq file")
+    print(f"{__name__:<45}generate dbc from tbl spell、spellitemenchantment and replace the corresponding server's dbc file and client's mpq file")
 
 def customize(instance):
 
@@ -47,4 +63,8 @@ def customize(instance):
     # multi_effect_on_scroll(instance, 5)
 
     # 15倍率 放大 大师的xx铭文 效果
-    muiti_master_inspiration(instance, 15)
+    # muiti_master_inspiration(instance, 15)
+
+    helper = Helper(instance)
+    # 查找跟大师的xx铭文相关的spellitemenchant，方便倍率修改该附魔数值
+    # helper.find_master_inspiration()

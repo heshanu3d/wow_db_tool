@@ -255,8 +255,15 @@ class Mysql:
     def execute_sql_with_ret(self, sql):
         self._cursor.execute(sql.strip())
         results = self._cursor.fetchall()
+        column_names = [i[0] for i in self._cursor.description]
         self._connection.commit()
-        return results
+        return results, column_names
+
+    def fast_select(self, sql):
+        results, column_names = self.execute_sql_with_ret(sql)
+        print(column_names)
+        for result in results:
+            print(result)
 
     def gen_item_from_item_template(self, SoundOverrideSubclass='SoundOverrideSubclass'):
         sql = f'''

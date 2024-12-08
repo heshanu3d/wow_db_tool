@@ -1,3 +1,7 @@
+class Helper:
+    def __init__(self, instance):
+        self._instance = instance
+
 # 生成蓝宝石、紫宝石的强化+1 -> +5的 item_template、gemproperties、spellitemenchantment和item_up 信息
 def gen_jewel_update(instance, rate:int):
     item_template_sqls = []
@@ -106,3 +110,5 @@ def customize(instance):
 
     # 生成蓝宝石、紫宝石的强化+1 -> +5的 item_template、gemproperties、spellitemenchantment和item_up 信息
     # gen_jewel_update(instance, 2)
+
+    helper = Helper(instance)

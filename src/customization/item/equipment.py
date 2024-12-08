@@ -1,3 +1,7 @@
+class Helper:
+    def __init__(self, instance):
+        self._instance = instance
+
 # {id : upid, ...}
 # @db_operation_decorator
 # def get_item_up_dict(self):
@@ -11,7 +15,7 @@
 # verification success and delete upper function
 # {id : upid, ...}
 def get_item_up_dict(instance):
-    columns = instance.execute_sql_with_ret(f'select id,upid from item_up;')
+    columns, _ = instance.execute_sql_with_ret(f'select id,upid from item_up;')
     item_up = {}
     for column in columns:
         item_up[column[0]] = column[1]
@@ -126,3 +130,5 @@ def customize(instance):
     # 生成蓝装、紫装的强化+1 -> +5的 item_template和item_up 信息
     # gen_item_update_v1(instance)
     # gen_item_update_v2(instance)
+
+    helper = Helper(instance)

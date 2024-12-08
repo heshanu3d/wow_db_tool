@@ -1,3 +1,7 @@
+class Helper:
+    def __init__(self, instance):
+        self._instance = instance
+
 # 合成宝石
 def make_merge_jewel(instace):
     instace.copy_item(18262, 81000)
@@ -22,3 +26,5 @@ def customize(instance):
     # 汉化 item_template
     # instance.item_template_localeZH_1(instace)
     # instance.item_template_localeZH_2(instace)
+
+    helper = Helper(instance)
