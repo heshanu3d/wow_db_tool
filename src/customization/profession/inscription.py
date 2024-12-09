@@ -44,11 +44,15 @@ def muiti_master_inspiration(instance, rate):
     ]
 
     gen_sqls = []
-    results, _ = instance.execute_sql_with_ret(sql)
+    results = instance.execute_sql_with_retval(sql)
+    if results is None:
+        print(f'sql execute failed:\n    {sql}')
+        return
+
     for ids in results:
         id_spell = ids[0]
         id_EffectMisc = ids[1]
-        # gen_sqls.append(instance.update_item(id_EffectMisc, options=options_spim, table='spellitemenchantment', primary_key='id', gen_sql_mode=True))
+        gen_sqls.append(instance.update_item(id_EffectMisc, options=options_spim, table='spellitemenchantment', primary_key='id', gen_sql_mode=True))
         gen_sqls.append(instance.update_item(id_spell,      options=options_sp,   table='spell',                primary_key='id', gen_sql_mode=True))
     
     # instance.execute_multi_sqls(gen_sqls)

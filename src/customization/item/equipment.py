@@ -15,7 +15,12 @@ class Helper:
 # verification success and delete upper function
 # {id : upid, ...}
 def get_item_up_dict(instance):
-    columns, _ = instance.execute_sql_with_ret(f'select id,upid from item_up;')
+    sql = f'select id,upid from item_up;'
+    columns = instance.execute_sql_with_retval(sql)
+    if columns is None:
+        print(f'sql execute failed:\n    {sql}')
+        return
+
     item_up = {}
     for column in columns:
         item_up[column[0]] = column[1]

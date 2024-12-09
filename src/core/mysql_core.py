@@ -1,4 +1,4 @@
-import mysql.connector, csv, time, re, copy
+import mysql.connector, csv, time, re, copy, tabulate
 from mysql.connector import Error
 from functools import wraps
 
@@ -108,6 +108,10 @@ class Mysql:
     def option_op(self, results:list, options:list=[]):
         if len(options) == 0:
             return
+
+        null_op_suffixs = ['级','秒']
+        null_op_suffixs_regex = {'|'.join(null_op_suffixs)}
+
         for opt in options:
             if len(opt) == 2:
                 results[opt[0]] = opt[1]
@@ -116,15 +120,26 @@ class Mysql:
                     results[opt[0]] += opt[1]
                 elif opt[2].startswith('multi'):
                     results[opt[0]] *= opt[1]
+                elif opt[2].startswith('div'):
+                    results[opt[0]] /= opt[1]
                 elif opt[2].startswith('compo_multi'):
                     results[opt[0]] = (results[opt[0]] + 1) * opt[1] - 1
+                elif opt[2].startswith('compo_div'):
+                    results[opt[0]] = (results[opt[0]] + 1) / opt[1] - 1
                 elif opt[2].startswith('add_update_suffix'):
                     results[opt[0]] = re.sub(r"\+(\d+)", "{}".format(opt[1]), results[opt[0]])
-                elif opt[2].startswith('digit_in_str_multi'):
-                    def multiply_digits(match):
-                        return str(int(match.group(0)) * opt[1])
-                    results[opt[0]] = re.sub(r'\d+', multiply_digits, results[opt[0]])
-
+                elif opt[2].startswith('digit_in_str'):
+                    idx = len('digit_in_str')
+                    def str_op(match):
+                        if match.group(3) in null_op_suffixs:
+                            return match.group(0)
+                        else:
+                            if opt[2][idx:] == '_multi':
+                                return str(int(int(match.group(1)) * opt[1]))
+                            elif opt[2][idx:] == '_div':
+                                return str(int(int(match.group(1)) / opt[1]))
+                    results[opt[0]] = re.sub(f'(\d+)(\.\d+)?([{null_op_suffixs_regex}]?)', str_op, results[opt[0]])
+                    
     @db_operation_decorator
     def update_item(self, entry, options:list=[], table:str='', primary_key:str='', gen_sql_mode=False):
         _options = copy.deepcopy(options)
@@ -252,18 +267,38 @@ class Mysql:
         self._connection.commit()
 
     @db_operation_decorator
-    def execute_sql_with_ret(self, sql):
+    def execute_sql_with_retval_with_col_names(self, sql):
         self._cursor.execute(sql.strip())
         results = self._cursor.fetchall()
         column_names = [i[0] for i in self._cursor.description]
-        self._connection.commit()
-        return results, column_names
 
-    def fast_select(self, sql):
-        results, column_names = self.execute_sql_with_ret(sql)
-        print(column_names)
-        for result in results:
-            print(result)
+        return [column_names] + results
+
+    @db_operation_decorator
+    def execute_sql_with_retval(self, sql):
+        self._cursor.execute(sql.strip())
+        results = self._cursor.fetchall()
+
+        return results
+
+    def fast_select(self, sql, tablefmt='markdown'):
+        headers = 'firstrow'
+        results = self.execute_sql_with_retval_with_col_names(sql)
+        if results is None:
+            headers=''
+            tablefmt='grid'
+            results = [['Error']]
+
+        tablefmts = ['plain', 'grid', 'fancy_grid', 'pipe', 'html', 'latex', 'markdown', 'all']
+        if not tablefmt in tablefmts:
+            print('in function call instace.fast_select(sql, tablefmt):')
+            print(f'    tablefmt could be one of {tablefmts}')
+            return
+        if tablefmt == 'all':
+            for fmt in tablefmts[:-1]:
+                print(tabulate.tabulate(results, headers=headers, tablefmt=fmt))
+        else:
+            print(tabulate.tabulate(results, headers=headers, tablefmt=tablefmt))
 
     def gen_item_from_item_template(self, SoundOverrideSubclass='SoundOverrideSubclass'):
         sql = f'''
