@@ -1,6 +1,14 @@
 class Helper:
     def __init__(self, instance):
         self._instance = instance
+    def rough_stone_finder(self):
+        sql = """
+            select i.entry,i.name,i.class,i.subclass from item_template i
+            # limit 10;
+            # where i.name like "虎%";
+            WHERE i.class = 3 AND i.subclass = 7;
+        """
+        self._instance.fast_select(sql)
 
 # 合成宝石
 def make_merge_jewel(instace):
@@ -24,7 +32,8 @@ def customize(instance):
     # instance.make_merge_jewel(instance)
 
     # 汉化 item_template
-    # instance.item_template_localeZH_1(instace)
-    # instance.item_template_localeZH_2(instace)
+    # item_template_localeZH_1(instance)
+    # item_template_localeZH_2(instance)
 
     helper = Helper(instance)
+    # helper.rough_stone_finder()

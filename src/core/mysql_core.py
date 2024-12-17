@@ -2,6 +2,8 @@ import mysql.connector, csv, time, re, copy, tabulate
 from mysql.connector import Error
 from functools import wraps
 
+fast_select_f = open('tmp.txt', 'a', encoding='utf-8')
+
 local_config_1 = {
     'host':'localhost',
     'user':'root',
@@ -296,9 +298,15 @@ class Mysql:
             return
         if tablefmt == 'all':
             for fmt in tablefmts[:-1]:
-                print(tabulate.tabulate(results, headers=headers, tablefmt=fmt))
+                output = tabulate.tabulate(results, headers=headers, tablefmt=fmt)
+                output += '\n'
+                fast_select_f.writelines(output)
+                print(output)
         else:
-            print(tabulate.tabulate(results, headers=headers, tablefmt=tablefmt))
+            output = tabulate.tabulate(results, headers=headers, tablefmt=tablefmt)
+            output += '\n'
+            fast_select_f.writelines(output)
+            print(output)
 
     def gen_item_from_item_template(self, SoundOverrideSubclass='SoundOverrideSubclass'):
         sql = f'''
