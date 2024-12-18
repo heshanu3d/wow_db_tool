@@ -19,3 +19,4 @@ if __name__ == "__main__":
     customization.item.equipment.customize(instance)
     customization.dungeon.common.customize(instance)
     customization.dungeon.raid.customize(instance)
+    customization.spell.rogue.customize(instance)
