@@ -2,4 +2,5 @@
 *.txt
 *.dbc
 *.sql
+*.pyc
 __pycache__

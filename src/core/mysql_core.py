@@ -4,18 +4,20 @@ from functools import wraps
 
 fast_select_f = open('tmp.txt', 'a', encoding='utf-8')
 
+# cloud server
 local_config_1 = {
     'host':'localhost',
-    'user':'root',
-    'password':'root',
-    'database':'acore_world'
+    'user':'mangos',
+    'password':'mangos',
+    'database':'mangos'
 }
 
+# local server
 local_config_2 = {
     'host':'localhost',
     'user':'root',
     'password':'ascent',
-    'database':'mangos_world'
+    'database':'vmangos_mangos'
 }
 
 remote_config_1 = {
@@ -40,6 +42,12 @@ class Mysql:
         self._cursor = None
         self._sqls = []
         self._entrys = []
+        self.connect()
+        if self._connection and self._connection.is_connected():
+            self._cursor.close()
+            self._connection.close()
+        else:
+            exit(-1)
     def connect(self, configs=mysql_configs):
         def _connect(config):
             try:
@@ -47,7 +55,8 @@ class Mysql:
                     host=config['host'],
                     user=config['user'],
                     password=config['password'],
-                    database=config['database']
+                    database=config['database'],
+                    auth_plugin='mysql_native_password',
                 )
                 if self._connection.is_connected():
                     self._db_info = self._connection.get_server_info()
@@ -89,6 +98,26 @@ class Mysql:
             delta_time = end_time - start_time
             if delta_time > 0 and self.debug:
                 print(f'{func.__name__} 耗时 {delta_time}秒')
+            return ret
+        return wrapper
+
+    def db_operation_decorator_no_verbose(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            self.connect()
+            ret = None
+            try:
+                if self._connection.is_connected():
+                    ret = func(self, *args, **kwargs)
+                else:
+                    print('Mysql is not connected')
+            except Error as e:
+                print(f"数据库操作错误：{e}")
+            finally:
+                # 关闭游标和连接
+                if self._connection and self._connection.is_connected():
+                    self._cursor.close()
+                    self._connection.close()
             return ret
         return wrapper
 
@@ -268,7 +297,7 @@ class Mysql:
                 self._cursor.execute(s.strip())
         self._connection.commit()
 
-    @db_operation_decorator
+    @db_operation_decorator_no_verbose
     def execute_sql_with_retval_with_col_names(self, sql):
         self._cursor.execute(sql.strip())
         results = self._cursor.fetchall()

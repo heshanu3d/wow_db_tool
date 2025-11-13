@@ -25,6 +25,13 @@ mysql -h x.x.x.x -u hs -p
 ## ERROR 2059 (HY000): Authentication plugin 'caching_sha2_password' cannot be loaded
 ```
 ALTER USER 'root'@'%' IDENTIFIED WITH mysql_native_password BY 'root';
+
+# on non-root user
+ALTER USER 'mangos'@'localhost' IDENTIFIED WITH mysql_native_password BY 'mangos';
+
+# 更改回原来的 caching_sha2_password 认证方式
+ALTER USER 'mangos'@'localhost' IDENTIFIED WITH caching_sha2_password BY '你的密码，如mangos';
+ALTER USER 'mangos'@'localhost' IDENTIFIED WITH caching_sha2_password BY 'mangos';
 ```
 
 ## ERROR 1045 (28000): Access denied for user 'root'@'192.168.71.87' (using password: YES)
@@ -35,6 +42,18 @@ create user 'root'@'%' IDENTIFIED with mysql_native_password by 'root';
 ## user权限查询
 ```
 SELECT host, user, authentication_string, plugin FROM user WHERE user='hs';
+```
+
+## 数据库导出及导入
+```
+# 步骤1：导出表结构及数据
+mysqldump -u 用户名 -p 数据库A 表t > table_t.sql
+
+# 只导出数据（如果表结构已存在）
+mysqldump -u 用户名 -p --no-create-info 数据库A 表t > table_t_data.sql
+
+# 步骤2：导入到数据库B
+mysql -u 用户名 -p 数据库B < table_t.sql
 ```
 
 # II 宝石强化
