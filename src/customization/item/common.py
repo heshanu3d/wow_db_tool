@@ -27,7 +27,7 @@ def item_template_localeZH_2(instace):
     instace.execute_multi_sqls(sql)
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
     # 合成宝石
     # instance.make_merge_jewel(instance)
 

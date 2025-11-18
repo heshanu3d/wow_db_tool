@@ -128,7 +128,7 @@ def gen_item_update_v2(instance):
     instance.debug = _debug
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
     # 去掉装备和武器的唯一属性
     # remove_unique_attr_on_equip(instance)
 

@@ -4,3 +4,4 @@ from .enchantment import customize
 from .engineering import customize
 from .inscription import customize
 from .jewel import customize
+from .common import customize

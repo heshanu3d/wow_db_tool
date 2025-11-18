@@ -36,7 +36,7 @@ def multi_effect_on_potion(instance, multi):
     instance.execute_multi_sqls(_sql(3, multi//2))
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
     # 25倍率 放大 药剂效果, 12.5倍率放大药剂效果
     # multi_effect_on_potion(instance, 25)
 

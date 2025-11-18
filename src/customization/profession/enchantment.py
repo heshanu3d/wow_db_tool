@@ -58,7 +58,7 @@ def muiti_enchantment_spell(instance, rate):
     print(f"{__name__:<45}generate dbc from tbl spell、spellitemenchantment and replace the corresponding server's dbc file and client's mpq file")
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
     
     helper = Helper(instance)
     # 查找跟附魔相关的spell，方便一键生成学习脚本

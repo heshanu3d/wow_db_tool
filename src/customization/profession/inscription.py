@@ -62,7 +62,7 @@ def muiti_master_inspiration(instance, rate):
 
 def customize(instance):
 
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
     # 5倍率 放大 卷轴效果
     # multi_effect_on_scroll(instance, 5)
 

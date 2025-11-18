@@ -1,5 +1,4 @@
-# from .common import *
-from .common import *
+from ..base import spell
 
 cond = {
     # '暗影之舞': "s.spellname4='暗影之舞'",
@@ -83,6 +82,8 @@ cond = {
     '元素武器' : "s.spellname4='元素武器' and s.spellrank4 like '等级%' and Effect2!=0",
     '武器掌握' : "s.spellname4='武器掌握' and s.spellrank4 like '等级%'",
     '风暴打击' : "s.spellname4='风暴打击' and s.spellrank4 like '等级%' and startrecoverytime>0",
+
+    '火焰冲击' : "s.spellname4='火焰冲击' and s.spellrank4 like '等级%' and startrecoverytime>0",
 }
 
 mod_dmg_skills = {
@@ -97,7 +98,7 @@ mod_talent_skills = {
     '烈焰震击' : 2,
     '闪电之盾' : 2,
 
-    # '震荡'    : 10,
+    '震荡'    : 10,
     '传导'    : 5,
     '大地之握' : 3,
     '元素防护' : 3,
@@ -129,7 +130,7 @@ mod_talent_skills = {
 }
 
 mod_dot_interval_skills = {
-    '烈焰震击' : 0.8,
+    '烈焰震击' : 0.6,
 }
 
 mod_trigger_chance_skills = {
@@ -202,13 +203,16 @@ def mod_spell_16269(instance):
         instance.execute_multi_sqls(sqls)
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
+    Helper = spell.Helper
+    Mod = spell.Mod
+    Test = spell.Test
 
     helper = Helper(instance, cond)
     mod = Mod(instance, cond)
     test = Test(helper, mod)
 
-    # helper.search(['闪电之盾'])
+    # helper.search(['风暴打击', ''])
 
     # test.mod_dmg({'烈焰震击':1.5})
     # test.mod_talent({'震荡':10})
@@ -217,6 +221,7 @@ def customize(instance):
     # test.mod_trigger_chance({'元素集中':2})
     # test.mod_duration({'闪电之盾' : '1800s'})
     # test.mod_trigger_time({'闪电之盾' : 60})
+    # test.mod_cooldown_time({'烈焰震击':2000, '火焰冲击':3000})
 
     # helper.search(all_spellnames, 'spell')
     # helper.search(all_spellnames, 'spell_template')

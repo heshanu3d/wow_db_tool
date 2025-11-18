@@ -3,6 +3,6 @@ class Helper:
         self._instance = instance
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
 
     helper = Helper(instance)

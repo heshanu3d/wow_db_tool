@@ -8,7 +8,7 @@ def remove_dungeon_requirements(instance):
     instance.clear_table_content('dungeon_access_requirements')
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
     # 取消副本进入限制(成就、任务、物品)
     # remove_dungeon_requirements(instance)
 

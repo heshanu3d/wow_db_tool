@@ -104,7 +104,7 @@ def del_update_jewel_dbinfo(instance):
 
 
 def customize(instance):
-    print(f'{__name__:<45}start to costomize!')
+    print(f'{__name__:<45}start to customize!')
     # 删除强化蓝宝石、黄宝石信息
     # del_update_jewel_dbinfo(instance)
 
