@@ -1,3 +1,5 @@
+import inspect
+
 def cond_conv2server(cond):
     condition = cond
     condition = condition.replace('s.id', 's.entry')
@@ -220,8 +222,7 @@ class Mod:
         cond = self._cond
         for spellname, trigger_time in spellnames.items():
             if spellname in cond.keys():
-                self.mod_effect_on_spell('spell',          trigger_time, cond[spellname], 6, sql_type='trigger_time')
-                self.mod_effect_on_spell('spell_template', trigger_time, cond[spellname], 6, sql_type='trigger_time')
+                self.mod_effect_on_spell('spell',          trigger_time, cond[spellname], 6, sql_type='triggermod_trigger_time_time')
 
     def mod_cooldown_time(self, spellnames):
         cond = self._cond
@@ -230,8 +231,7 @@ class Mod:
                 self.mod_effect_on_spell('spell',          cooldown_time, cond[spellname], 6, sql_type='cooldown_time')
                 self.mod_effect_on_spell('spell_template', cooldown_time, cond[spellname], 6, sql_type='cooldown_time')
 
-    def mod_cast_time(self, spellnames):
-        cond = self._cond
+    def mod_cast_time_with_condition(self, cast_time, condition):
         cast_time_dict = {
                  '0' :   1,
                '0ms' :   1,
@@ -275,59 +275,53 @@ class Mod:
                '30s' :   9,
               '300s' :  70,
         }
+        if cast_time in cast_time_dict:
+            cast_time_idx = cast_time_dict[cast_time]
+            self.mod_effect_on_spell('spell',          cast_time_idx, condition, 6, sql_type='cast_time')
+            self.mod_effect_on_spell('spell_template', cast_time_idx, condition, 6, sql_type='cast_time')
+        else:
+            # print(f'WARNING: cast_time {cast_time} not in duration_dict')
+            raise Exception(f'WARNING: cast_time {cast_time} not in duration_dict')
+
+    def mod_cast_time(self, spellnames):
+        cond = self._cond
         for spellname, cast_time in spellnames.items():
             if spellname in cond.keys():
-                if cast_time in cast_time_dict:
-                    cast_time_idx = cast_time_dict[cast_time]
-                    self.mod_effect_on_spell('spell',          cast_time_idx, cond[spellname], 6, sql_type='cast_time')
-                    self.mod_effect_on_spell('spell_template', cast_time_idx, cond[spellname], 6, sql_type='cast_time')
-                else:
-                    print(f'WARNING: {spellname} duration {duration} not in duration_dict')
+                self.mod_cast_time_with_condition(cast_time, cond[spellname])
 
 class Test:
     def __init__(self, helper, mod):
         self._helper = helper
         self._mod = mod
+
+    # 复制 Mod里的mod方法，并在调用前后，查询数据库
     def __getattr__(self, name):
         # 当属性不存在时，检查B是否有该方法
         if hasattr(self._mod, name) and callable(getattr(self._mod, name)):
+            signature = inspect.signature(getattr(self._mod, name))
+            num_params = len(signature.parameters)
+
             # 返回一个包装函数
-            def wrapper(*args, **kwargs):
+            # 1参数的对应函数 mod_xxx(self, spellnames):
+            def wrapper_1_param(*args, **kwargs):
                 if args and len(args) > 0:
                     spell_mods = args[0]
                     self._helper.search(list(spell_mods.keys()))
                     getattr(self._mod, name)(spell_mods)  # 调用B的方法
                     self._helper.search(list(spell_mods.keys()))
-            return wrapper
+
+            # 2参数的对应函数 mod_xxx_with_condition(self, xxx, condition):
+            def wrapper_2_param(*args, **kwargs):
+                if args and len(args) > 1:
+                    self._helper.search_with_cond(args[1])
+                    getattr(self._mod, name)(*args, **kwargs)  # 调用B的方法
+                    self._helper.search_with_cond(args[1])
+
+            if num_params == 1:
+                return wrapper_1_param
+            elif num_params == 2:
+                return wrapper_2_param
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-    # def mod_talent(self, spell_and_multiratios):
-    #     self._helper.search(spell_and_multiratios.keys())
-    #     self._mod.mod_talent(spell_and_multiratios)
-    #     self._helper.search(spell_and_multiratios.keys())
-    # def mod_dmg(self, spell_and_multiratios):
-    #     self._helper.search(spell_and_multiratios.keys())
-    #     self._mod.mod_dmg(spell_and_multiratios)
-    #     self._helper.search(spell_and_multiratios.keys())
-    # def mod_dot_interval(self, spell_and_multiratios):
-    #     self._helper.search(spell_and_multiratios.keys())
-    #     self._mod.mod_dot_interval(spell_and_multiratios)
-    #     self._helper.search(spell_and_multiratios.keys())
-    # def mod_trigger_chance(self, spell_and_multiratios):
-    #     self._helper.search(spell_and_multiratios.keys())
-    #     self._mod.mod_trigger_chance(spell_and_multiratios)
-    #     self._helper.search(spell_and_multiratios.keys())
-    # def mod_duration(self, spell_and_multiratios):
-    #     self._helper.search(spell_and_multiratios.keys())
-    #     self._mod.mod_duration(spell_and_multiratios)
-    #     self._helper.search(spell_and_multiratios.keys())
-    # def mod_trigger_time(self, spell_and_multiratios):
-    #     self._helper.search(spell_and_multiratios.keys())
-    #     self._mod.mod_trigger_time(spell_and_multiratios)
-    #     self._helper.search(spell_and_multiratios.keys())
-    # def mod_cooldown_time(self, spell_and_multiratios):
-    #     self._helper.search(spell_and_multiratios.keys())
-    #     self._mod.mod_cooldown_time(spell_and_multiratios)
-    #     self._helper.search(spell_and_multiratios.keys())
 
 class Helper:
     def __init__(self, instance, cond):
@@ -378,3 +372,12 @@ class Helper:
                     self._search(cond[spellname])
                 if spellname in cond:
                     self._search_server(cond_conv2server(cond[spellname]))
+
+    def search_with_cond(self, condition, table=''):
+        if table == 'spell':
+            self._search(condition)
+        elif table == 'spell_template':
+            self._search_server(cond_conv2server(condition))
+        elif table == '':
+            self._search(condition)
+            self._search_server(cond_conv2server(condition))

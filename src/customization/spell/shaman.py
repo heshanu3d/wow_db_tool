@@ -39,6 +39,7 @@ cond = {
     # TODO 3
     '次级治疗波' : "s.spellname4='次级治疗波'    and s.spellrank4 like '等级%' and startrecoverytime>0",
     '治疗波' : "s.spellname4='治疗波'    and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '治疗链' : "s.spellname4='治疗链'    and s.spellrank4 like '等级%' and startrecoverytime>0",
     '消毒术' : "s.spellname4='消毒术'    and startrecoverytime>0",
     '祛病术' : "s.spellname4='祛病术'    and startrecoverytime>0",
 
@@ -83,7 +84,7 @@ cond = {
     '武器掌握' : "s.spellname4='武器掌握' and s.spellrank4 like '等级%'",
     '风暴打击' : "s.spellname4='风暴打击' and s.spellrank4 like '等级%' and startrecoverytime>0",
 
-    '火焰冲击' : "s.spellname4='火焰冲击' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    
 }
 
 mod_dmg_skills = {
@@ -143,6 +144,11 @@ mod_duration_skills = {
 
 mod_trigger_time_skills = {
     '闪电之盾' : 60,
+}
+
+mod_cast_time_skills = {
+    '闪电箭'   : '2500ms',
+    '闪电链'   : '250ms',
 }
 
 gcd_eq0_skills = [
@@ -223,10 +229,12 @@ def customize(instance):
     # test.mod_trigger_time({'闪电之盾' : 60})
     # test.mod_cooldown_time({'烈焰震击':2000, '火焰冲击':3000})
 
+    
     # helper.search(all_spellnames, 'spell')
     # helper.search(all_spellnames, 'spell_template')
     # 等价于以上两句
     # helper.search(all_spellnames)
+    helper.search(['次级治疗波','治疗波','治疗链','消毒术','祛病术','闪电链'])
 
     # 调整 部分萨满技能伤害至 x倍
     # mod.mod_dmg(mod_dmg_skills)
