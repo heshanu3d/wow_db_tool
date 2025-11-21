@@ -195,7 +195,7 @@ def mod_spell_16269(instance):
     spellname = '双手斧和锤'
     description = '使你可以使用双手斧,双手锤和双手剑'
     if spellname in cond:
-        results = instance.execute_sql_with_retval(sql_query('spell_template', cond_conv2server(cond[spellname])))
+        results = instance.execute_sql_with_retval(spell.sql_query('spell_template', spell.cond_conv2server(cond[spellname])))
         entry_condition_str = ' or '.join([f"s.entry={item[0]}" for item in results])
         sqls = f'''
                 update spell s set Effect3=36,EffectImplicitTargetA3=1,EffectTriggerSpell3=202,SpellDescription4='{description}'
