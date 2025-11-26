@@ -40,8 +40,8 @@ cond = {
     '次级治疗波' : "s.spellname4='次级治疗波'    and s.spellrank4 like '等级%' and startrecoverytime>0",
     '治疗波' : "s.spellname4='治疗波'    and s.spellrank4 like '等级%' and startrecoverytime>0",
     '治疗链' : "s.spellname4='治疗链'    and s.spellrank4 like '等级%' and startrecoverytime>0",
-    '消毒术' : "s.spellname4='消毒术'    and startrecoverytime>0",
-    '祛病术' : "s.spellname4='祛病术'    and startrecoverytime>0",
+    '消毒术' : "s.spellname4='消毒术'    and startrecoverytime>0 and s.id=526",
+    '祛病术' : "s.spellname4='祛病术'    and startrecoverytime>0 and s.id=2870",
 
     # '幽魂之狼' : "s.spellname4='幽魂之狼' and s.spellrank4 like '等级%'",
 
@@ -82,17 +82,21 @@ cond = {
     '强化武器图腾' : "s.spellname4='强化武器图腾' and s.spellrank4 like '等级%'",
     '元素武器' : "s.spellname4='元素武器' and s.spellrank4 like '等级%' and Effect2!=0",
     '武器掌握' : "s.spellname4='武器掌握' and s.spellrank4 like '等级%'",
-    '风暴打击' : "s.spellname4='风暴打击' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '风暴打击' : "s.spellname4='风暴打击' and s.spellrank4 like '等级%' and startrecoverytime>0 and s.effect1=58",
 
     
 }
 
 mod_dmg_skills = {
-    '闪电箭'   : 1.5,
-    '闪电链'   : 1.5,
-    '地震术'   : 1.5,
-    '烈焰震击' : 1.5,
-    '冰霜震击' : 1.5,
+    '闪电箭'    : 1.5,
+    '闪电链'    : 1.5,
+    '地震术'    : 1.5,
+    '烈焰震击'  : 1.5,
+    '冰霜震击'  : 1.5,
+
+    '次级治疗波': 1.5,
+    '治疗波'    : 1.5,
+    '治疗链'    : 1.5,
 }
 
 mod_talent_skills = {
@@ -146,9 +150,13 @@ mod_trigger_time_skills = {
     '闪电之盾' : 60,
 }
 
+mod_cooldown_time_skills = {
+    "风暴打击" : 6000,
+}
+
 mod_cast_time_skills = {
     '闪电箭'   : '2500ms',
-    '闪电链'   : '250ms',
+    '闪电链'   : '2000ms',
 }
 
 gcd_eq0_skills = [
@@ -234,7 +242,15 @@ def customize(instance):
     # helper.search(all_spellnames, 'spell_template')
     # 等价于以上两句
     # helper.search(all_spellnames)
-    helper.search(['次级治疗波','治疗波','治疗链','消毒术','祛病术','闪电链'])
+    helper.search([
+        # '次级治疗波',
+        # '治疗波',
+        # '治疗链',
+        # '消毒术',
+        # '祛病术',
+        # '闪电链',
+        "风暴打击",
+        ])
 
     # 调整 部分萨满技能伤害至 x倍
     # mod.mod_dmg(mod_dmg_skills)
@@ -248,10 +264,12 @@ def customize(instance):
     # mod.mod_duration(mod_duration_skills)
     # 调整 部分萨满技能触发次数至 指定数量
     # mod.mod_trigger_time(mod_trigger_time_skills)
+    mod.mod_cooldown_time(mod_cooldown_time_skills)
 
     # mod spell : 双手斧和锤
     # 使你可以使用双手斧和双手锤 -> 使你可以使用双手斧,双手锤和双手剑
     # mod_spell_16269(instance)
+
 
 
     # 调整 部分萨满技能gcd调整1000ms -> 250ms
