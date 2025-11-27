@@ -1,0 +1,7 @@
+{
+    "editor.fontFamily" : "Sarasa Mono SC",
+    "editor.renderWhitespace": "boundary",
+    "editor.fontSize": 15,
+    "terminal.integrated.fontFamily" : "Sarasa Mono SC",
+    "terminal.integrated.fontSize": 15
+}
