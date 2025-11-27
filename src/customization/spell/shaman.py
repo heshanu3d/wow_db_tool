@@ -15,10 +15,10 @@ cond = {
     # '腐蚀术' : "s.spellname4='腐蚀术'    and s.spellrank4 like '等级%' and startrecoverytime>0",
     # '痛苦诅咒' : "s.spellname4='痛苦诅咒'    and s.spellrank4 like '等级%' and startrecoverytime>0",
 
-    '闪电箭' : "s.spellname4='闪电箭'    and s.spellrank4 like '等级%' and startrecoverytime>0 and ((s.id<10393 or s.id=15207 or s.id=15208) and s.id!=8246)",
-    '闪电链' : "s.spellname4='闪电链'    and s.spellrank4 like '等级%' and startrecoverytime>0",
-    '闪电之盾' : "s.spellname4='闪电之盾'    and s.spellrank4 like '等级%' and startrecoverytime>0 and EffectTriggerSpell1>0 and procflags=139944",
-    '地震术' : "s.spellname4='地震术'    and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '闪电箭' : "s.spellname4='闪电箭'     and s.spellrank4 like '等级%' and startrecoverytime>0 and ((s.id<10393 or s.id=15207 or s.id=15208) and s.id!=8246)",
+    '闪电链' : "s.spellname4='闪电链'     and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '闪电之盾' : "s.spellname4='闪电之盾' and s.spellrank4 like '等级%' and startrecoverytime>0 and EffectTriggerSpell1>0 and procflags=139944",
+    '地震术' : "s.spellname4='地震术'     and s.spellrank4 like '等级%' and startrecoverytime>0",
     '烈焰震击' : "s.spellname4='烈焰震击' and s.spellrank4 like '等级%' and startrecoverytime>0",
     '冰霜震击' : "s.spellname4='冰霜震击' and s.spellrank4 like '等级%' and startrecoverytime>0",
 
@@ -84,7 +84,8 @@ cond = {
     '武器掌握' : "s.spellname4='武器掌握' and s.spellrank4 like '等级%'",
     '风暴打击' : "s.spellname4='风暴打击' and s.spellrank4 like '等级%' and startrecoverytime>0 and s.effect1=58",
 
-    
+    # 治疗天赋
+    '强化治疗波': "s.spellname4='强化治疗波' and s.spellrank4 like '等级%'",
 }
 
 mod_dmg_skills = {
@@ -159,17 +160,13 @@ mod_cast_time_skills = {
     '闪电链'   : '2000ms',
 }
 
-gcd_eq0_skills = [
-
-]
-
-gcd_gt0_skills = [
-    '闪电箭',
-    # '闪电链',
-    # '大地震击',
-    # '烈焰震击',
-    # '冰霜震击',
-]
+gcd_time_skills = {
+    '闪电箭'   : 200,
+    '闪电链'   : 200,
+    '大地震击' : 200,
+    '烈焰震击' : 200,
+    '冰霜震击' : 200,
+}
 
 all_spellnames = cond.keys()
 
@@ -236,7 +233,7 @@ def customize(instance):
     # test.mod_duration({'闪电之盾' : '1800s'})
     # test.mod_trigger_time({'闪电之盾' : 60})
     # test.mod_cooldown_time({'烈焰震击':2000, '火焰冲击':3000})
-
+    # test.mod_gcd_time({"风暴打击": 100})
     
     # helper.search(all_spellnames, 'spell')
     # helper.search(all_spellnames, 'spell_template')
@@ -248,8 +245,12 @@ def customize(instance):
         # '治疗链',
         # '消毒术',
         # '祛病术',
-        # '闪电链',
-        "风暴打击",
+        '闪电链',
+        '闪电箭',
+        # "风暴打击",
+        "闪电掌握",
+        # "治疗波",
+        # "强化治疗波",
         ])
 
     # 调整 部分萨满技能伤害至 x倍
@@ -264,13 +265,11 @@ def customize(instance):
     # mod.mod_duration(mod_duration_skills)
     # 调整 部分萨满技能触发次数至 指定数量
     # mod.mod_trigger_time(mod_trigger_time_skills)
-    mod.mod_cooldown_time(mod_cooldown_time_skills)
+    # mod.mod_cooldown_time(mod_cooldown_time_skills)
 
     # mod spell : 双手斧和锤
     # 使你可以使用双手斧和双手锤 -> 使你可以使用双手斧,双手锤和双手剑
     # mod_spell_16269(instance)
-
-
 
     # 调整 部分萨满技能gcd调整1000ms -> 250ms
     # mod.mod_gcd(250, gcd_gt0_skills)

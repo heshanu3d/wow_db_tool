@@ -75,6 +75,22 @@ def sql_update_cast_time(table, idx, cond, effect_type):
     '''
     return sql
 
+def sql_update_gcd_time(table, gcd_ms, cond, effect_type):
+    sql = ''
+    if gcd_ms == 0:
+        sql = f'''
+            update {table} s set StartRecoveryCategory=0,StartRecoveryTime=0
+            WHERE StartRecoveryCategory=133 and StartRecoveryTime>0 and ({cond});
+        '''
+    elif gcd_ms > 0:
+        sql = f'''
+            update {table} s set StartRecoveryTime={gcd_ms},StartRecoveryCategory=133
+            WHERE StartRecoveryCategory=133 and StartRecoveryTime>0 and ({cond});
+        '''
+    else:
+        print(f'err gcd_ms value: {gcd_ms} < 0')
+    return sql
+
 def sql_query(table, cond):
     return f'''
         select DISTINCT s.entry id
@@ -108,6 +124,8 @@ class Mod:
             sql_update = sql_update_cooldown_time
         elif sql_type == 'cast_time':
             sql_update = sql_update_cast_time
+        elif sql_type == 'gcd_time':
+            sql_update = sql_update_gcd_time
         else:
             raise Exception('sql_type error')
 
@@ -289,6 +307,21 @@ class Mod:
             if spellname in cond.keys():
                 self.mod_cast_time_with_condition(cast_time, cond[spellname])
 
+    def mod_gcd_time(self, spellnames):
+        cond = self._cond
+        for spellname, gcd_time in spellnames.items():
+            if spellname in cond.keys():
+                self.mod_effect_on_spell('spell',          gcd_time, cond[spellname], 6, sql_type='gcd_time')
+                self.mod_effect_on_spell('spell_template', gcd_time, cond[spellname], 6, sql_type='gcd_time')
+
+# 减少技能cd
+# 天赋 effectItemType & spellfamilyflags 有值， 位于方式绑定技能
+# vmangos_mangos: spellfamilyName
+# vmangos_mangos: spellfamilyflags
+# dbc: spellfamilyName
+# dbc: spellfamilyflag1
+# dbc: spellfamilyflag2
+
 class Test:
     def __init__(self, helper, mod):
         self._helper = helper
@@ -336,7 +369,7 @@ class Helper:
             ,EffectAmplitude1 as amp1,EffectAmplitude2 as amp2
             ,DurationIndex dur_idx
             ,EffectTriggerSpell1 trig1,procchance trig_c,procflags proc_f,ProcCharges trig_t,EffectMiscValue1 as misc1
-            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd
+            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd,effectItemType1 eit,spellfamilyflags1 sff1,spellfamilyflags1 sff2,spellFamilyName sfn
             # ,SpellDescription4 d
             from spell s
             WHERE {condition};
@@ -351,7 +384,7 @@ class Helper:
             ,EffectAmplitude1 as amp1,EffectAmplitude2 as amp2
             ,DurationIndex dur_idx
             ,EffectTriggerSpell1 trig1,procchance trig_c,procflags proc_f,ProcCharges trig_t,EffectMiscValue1 as misc1
-            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd
+            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd,effectItemType1 eit,spellfamilyflags sff,spellFamilyName sfn
             # ,description_loc4 d
             from spell_template s
             INNER JOIN locales_spell l ON s.entry = l.entry
@@ -381,3 +414,5 @@ class Helper:
         elif table == '':
             self._search(condition)
             self._search_server(cond_conv2server(condition))
+
+    # def search_affected_spell_by_talent(self, )
