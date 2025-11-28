@@ -59,6 +59,31 @@ or simply insert the migration id (Important Note: Unless you have already inser
 
 ```
 
+## patch-z 转换到 sql
+```
+1. 使用 MPQEditor 解析patch-z 到 *dbc
+2. 使用 WoW Spell Editor 导入 dbc
+(可选， 双端操作)
+3.1 从sql中导出 这些表
+mysqldump -u root -p vmangos_test_mangos spell spellcasttimes spellduration spellvisual spellvisualeffectname spellvisualkit spellvisualprecasttransitions talent talenttab > wow_spell_tables.sql
+3.2 导入到另个 数据库
+mysql -u mangos -p mangos < wow_spell_tables.sql
+```
+
+## dbc to sql
+```
+open dbc with 'WDBX Editor'
+Export -> To SQL File
+ReEdit sql file with vscode, and replace the table name
+```
+
+## sql to dbc
+```
+open dbc with 'WDBX Editor'
+Import -> From SQL
+input pw -> connect -> select database -> select tables -> select Update Existing -> Load
+```
+
 
 # deploy
 ## mysql安装

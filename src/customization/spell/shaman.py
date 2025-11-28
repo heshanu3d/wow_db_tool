@@ -1,8 +1,20 @@
 from ..base import spell
 
+# 速效毒药 表关联关系
+#  8700(effect=36 LEARN_SPELL) ->  8681(effect=24 CREATE_ITEM) -> 6947(item_template.id  spellid_1) ->  8679[modify duration in spell_effect_mod](effect=54, misc1) -> 323(SpellItemEnchantment.dbc effect_arg1) ->  8680
+#  8701(effect=36 LEARN_SPELL) ->  8687(effect=24 CREATE_ITEM) -> 6949(item_template.id  spellid_1) ->  8686[modify duration in spell_effect_mod](effect=54, misc1) -> 324(SpellItemEnchantment.dbc effect_arg1) ->  8685
+#  8810(effect=36 LEARN_SPELL) ->  8691(effect=24 CREATE_ITEM) -> 6950(item_template.id  spellid_1) ->  8688[modify duration in spell_effect_mod](effect=54, misc1) -> 325(SpellItemEnchantment.dbc effect_arg1) ->  8689
+# 11344(effect=36 LEARN_SPELL) -> 11341(effect=24 CREATE_ITEM) -> 8926(item_template.id  spellid_1) -> 11338[modify duration in spell_effect_mod](effect=54, misc1) -> 623(SpellItemEnchantment.dbc effect_arg1) -> 11335
+# 11345(effect=36 LEARN_SPELL) -> 11342(effect=24 CREATE_ITEM) -> 8927(item_template.id  spellid_1) -> 11339[modify duration in spell_effect_mod](effect=54, misc1) -> 624(SpellItemEnchantment.dbc effect_arg1) -> 11336
+# 11346(effect=36 LEARN_SPELL) -> 11343(effect=24 CREATE_ITEM) -> 8928(item_template.id  spellid_1) -> 11340[modify duration in spell_effect_mod](effect=54, misc1) -> 625(SpellItemEnchantment.dbc effect_arg1) -> 11337
+
 cond = {
-    'test' : 's.id in (8026,8028,8029)',
-    'test1' : 's.id in (8349, 8502, 8503,11306,11307)',
+    # 'test' : 's.id in (674,1424,30798)',
+    # 'test1' : 's.id in (8680, 8685, 8689,11335,11336,11337)',
+    # '双武器'   : "s.spellname4='双武器'",
+    '速效毒药_伤害'     : "s.spellname4 like'速效毒药%'        and s.spellrank4 like '等级%' and spellfamilyname=8 and effect1=2",
+    '速效毒药_几率'     : "s.spellname4 like'速效毒药%'        and s.spellrank4 like '等级%' and spellfamilyname=8 and effect1=54",
+    '强化速效毒药'      : "s.spellname4='强化毒药'             and s.spellrank4 like '等级%'",
     # '暗影之舞' : "s.spellname4='暗影之舞'",
     # '毒刃'     : "s.spellname4='毒刃'        and s.id=5938",
     # '佯攻'     : "s.spellname4='佯攻'        and s.spellrank4 like '等级%'",
@@ -25,10 +37,21 @@ cond = {
     '冰霜震击' : "s.spellname4='冰霜震击'   and s.spellrank4 like '等级%' and startrecoverytime>0",
 
     # TODO 1
-    '石化武器' : "s.spellname4='石化武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
-    '火舌武器' : "s.spellname4='火舌武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
-    '冰封武器' : "s.spellname4='冰封武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
-    '风怒武器' : "s.spellname4='风怒武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '石化武器'      : "s.spellname4='石化武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '火舌武器'      : "s.spellname4='火舌武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '冰封武器'      : "s.spellname4='冰封武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '风怒武器'      : "s.spellname4='风怒武器' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    # get from this sql
+    # '''    select s.id
+    #         from spell s
+    #         join (select EffectArg_1 id from spellitemenchantment ench
+    #         join spell s on s.EffectMiscValue1=ench.id
+    #         where (s.spellname4='风怒武器' and s.spellrank4 like '等级%' and startrecoverytime>0)) s1 on s1.id=s.id;'''
+    '石化武器_效果' : "s.id in (10400,15567,15568,15569,16311,16312,16313)",
+    '火舌武器_效果' : "s.id in (8026, 8028, 8029,10445,16343,16344)",
+    '冰封武器_效果' : "s.id in (8034, 8037,10458,16352,16353)",
+    '风怒武器_效果' : "s.id in (8233, 8236,10484,16361)",
+ 
 
     # 火焰新星图腾 机制: e1=87 召唤misc1 的creature_template ct, ct.entry=s.misc1的生物释放ct.spell_id1的技能， ct.spell_id1 触发 trig1的技能，最终trig1技能造成伤害
     '火焰新星图腾'      : "s.spellname4='火焰新星图腾' and s.spellrank4 like '等级%' and startrecoverytime>0",
@@ -114,11 +137,24 @@ mod_dmg_skills = {
 
     '火焰新星图腾_伤害'  : 1.5,
     '灼热图腾_伤害'  : 1.5,
+
+    '冰封武器_效果' : 10
+}
+
+mod_talent_dummy_skills = {
+    '火舌武器_效果' : 2,
+}
+
+mod_talent_extra_attack_skills = {
+    '风怒武器_效果' : 2
 }
 
 mod_talent_skills = {
     '烈焰震击'     : 2,
     '闪电之盾'     : 2,
+
+    '石化武器_效果': 2,
+    '风怒武器_效果': 2,
 
     '震荡'         : 10,
     '传导'         : 5,
@@ -213,12 +249,19 @@ mod_gcd_time_skills = {
     '消毒术'       : 200,
     '祛病术'       : 200,
     '幽魂之狼'     : 200,
+
+    '风暴打击'     : 200,
 }
 
 mod_trigger_skills = {
     '先祖治疗' : 4,
     '治疗之道' : 5,
 }
+
+mod_enchant_spell_trigger_chance_skills = {
+    '风怒武器' : 2,
+}
+
 all_spellnames = cond.keys()
 
 # 双手斧和锤
@@ -240,6 +283,7 @@ def mod_spell_16269(instance):
         '''
         # print(sqls)
         instance.execute_multi_sqls(sqls)
+
 
 def customize(instance):
     print(f'{__name__:<45}start to customize!')
@@ -269,20 +313,16 @@ def customize(instance):
     # 等价于以上两句
     # helper.search(all_spellnames)
 
-
-
     helper.search([
-        # 'test',
+        # # '双武器',
+        # '速效毒药_伤害',
+        # '速效毒药_几率',
+        '强化速效毒药',
         # 'test1',
-        # '风怒武器',
-        # '火舌武器',
-        # '石化武器',
-        # '幽魂之狼',
-        # '大地之力图腾',
-        # '灼热图腾',
-        # '火焰新星图腾',
-        # '法力之潮图腾',
-        ])
+    ])
+    # test.mod_enchant_spell_trigger_chance({'风怒武器': 1.5})
+    # test.mod_enchant_spell_trigger_chance({'速效毒药_几率' : 0.5})
+    # test.mod_talent_extra_attack({'风怒武器_效果' : 2})
 
     # 查询 受指定天赋受益的技能
     # helper.search_affected_spell_by_talent("强化治疗波")
@@ -299,6 +339,8 @@ def customize(instance):
     # mod.mod_dmg(mod_dmg_skills)
     # 调整 部分萨满天赋加成至 x倍
     # mod.mod_talent(mod_talent_skills)
+    # 调整 部分萨满dummy天赋加成至 x倍
+    # mod.mod_talent_dummy(mod_talent_dummy_skills)
     # 调整 部分萨满dot每条间隔时间至 x倍
     # mod.mod_dot_interval(mod_dot_interval_skills)
     # 调整 部分萨满技能触发几率至 x倍
@@ -313,12 +355,11 @@ def customize(instance):
     # mod.mod_gcd_time(mod_gcd_time_skills)
     # 调整 部分萨满触发技能的效果
     # mod.mod_trigger(mod_trigger_skills)
+    # 调整 萨满 风怒额外攻击次数 加成至 x倍
+    # mod.mod_talent_extra_attack(mod_talent_extra_attack_skills)
+    # 调整 萨满风怒武器触发概率
+    # mod.mod_enchant_spell_trigger_chance(mod_enchant_spell_trigger_chance_skills)
 
     # mod spell : 双手斧和锤
-    # 使你可以使用双手斧和双手锤 -> 使你可以使用双手斧,双手锤和双手剑
+    # 使你可以使用双石化武器手斧和双手锤 -> 使你可以使用双手斧,双手锤和双手剑
     # mod_spell_16269(instance)
-
-    # 调整 部分萨满技能gcd调整1000ms -> 250ms
-    # mod.mod_gcd(250, gcd_gt0_skills)
-    # 调整 部分萨满技能gcd调整 至 0ms
-    # mod.mod_gcd(0, gcd_eq0_skills)

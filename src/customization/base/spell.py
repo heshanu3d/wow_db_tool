@@ -91,6 +91,15 @@ def sql_update_gcd_time(table, gcd_ms, cond, effect_type):
         print(f'err gcd_ms value: {gcd_ms} < 0')
     return sql
 
+def sql_update_enchant_spell_trigger_chance(table, multi, cond, effect_type):
+    return f'''
+            update spellitemenchantment set
+            EffectPointsMin_1=EffectPointsMin_1*{multi}, EffectPointsMin_2=EffectPointsMin_2*{multi},EffectPointsMin_3=EffectPointsMin_3*{multi}
+            where id in (
+                select EffectMiscValue1 from spell s where ({cond})
+            );
+    '''
+
 def sql_query(table, cond):
     return f'''
         select DISTINCT s.entry id
@@ -145,6 +154,8 @@ class Mod:
             sql_update = sql_update_cast_time
         elif sql_type == 'gcd_time':
             sql_update = sql_update_gcd_time
+        elif sql_type == 'enchant_spell_trigger_chance':
+            sql_update = sql_update_enchant_spell_trigger_chance
         else:
             raise Exception('sql_type error')
 
@@ -162,6 +173,22 @@ class Mod:
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 2)
                 self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 2)
+
+    # x倍率 放大 多倍攻击次数
+    def mod_talent_extra_attack(self, spellnames):
+        cond = self._cond
+        for spellname, multi_rate in spellnames.items():
+            if spellname in cond.keys():
+                self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 19)
+                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 19)
+
+    # x倍率 放大 法术效果
+    def mod_talent_dummy(self, spellnames):
+        cond = self._cond
+        for spellname, multi_rate in spellnames.items():
+            if spellname in cond.keys():
+                self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 3)
+                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 3)
 
     # x倍率 放大 法术效果
     def mod_talent(self, spellnames):
@@ -353,6 +380,11 @@ class Mod:
                     entry_condition_str = ' or '.join([f"s.entry={item[0]}" for item in results])
                     self.mod_effect_on_spell(table,          multi_rate, entry_condition_str, 6)
 
+    def mod_enchant_spell_trigger_chance(self, spellnames):
+        cond = self._cond
+        for spellname, multi_rate in spellnames.items():
+            if spellname in cond.keys():
+                self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 6, sql_type='enchant_spell_trigger_chance')
 # 减少技能cd
 # 天赋 effectItemType & spellfamilyflags 有值， 位于方式绑定技能
 # vmangos_mangos: spellfamilyName
@@ -394,6 +426,31 @@ class Test:
             elif num_params == 2:
                 return wrapper_2_param
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+# struct SpellItemEnchantmentEntry
+# {
+#     uint32      ID;                                         // 0        m_ID
+#     uint32      type[3];                                    // 1-3      m_effect[3]
+#     uint32      amount[3];                                  // 4-6      m_effectPointsMin[3]
+#     //uint32      amount2[3]                                // 7-9      m_effectPointsMax[3]
+#     uint32      spellid[3];                                 // 10-12    m_effectArg[3]
+#     char*       description[8];                             // 13-20    m_name_lang[8]
+#                                                             // 21 string flags
+#     uint32      aura_id;                                    // 22       m_itemVisual
+#     uint32      slot;                                       // 23       m_flags
+# };
+
+# // Use first rank to access spell item enchant procs
+# float ppmRate = sSpellMgr.GetItemEnchantProcChance(spellInfo->Id);
+# float chance = ppmRate
+#                 ? GetPPMProcChance(WeaponSpeed, ppmRate)
+#                 : pEnchant->amount[s] != 0
+#                     ? float(pEnchant->amount[s])
+#                     : GetPPMProcChance(WeaponSpeed, 1.0f);
+    def mod_enchant_spell_trigger_chance(self, spellnames):
+        self._helper.search_enchant_spell_trigger_chance(spellnames)
+        self._mod.mod_enchant_spell_trigger_chance(spellnames)
+        self._helper.search_enchant_spell_trigger_chance(spellnames)
 
 class Helper:
     def __init__(self, instance, cond):
@@ -476,8 +533,12 @@ class Helper:
         elif table == 'spell_template':
             sql = sql_server
         elif table == '':
-            sql = sql_dbc + sql_server
-        self._instance.fast_select(sql)
+            sql = [sql_dbc, sql_server]
+        if isinstance(sql, list):
+            for sql in sql:
+                self._instance.fast_select(sql)
+        else:
+            self._instance.fast_select(sql)
 
     def _search_affected_spell_by_talent(self, condition):
         sql = f'''
@@ -529,3 +590,81 @@ class Helper:
         elif table == '':
             self._search_affected_spell_by_talent(cond[spellname])
             self._search_affected_spell_by_talent_server(cond_conv2server(cond[spellname]))
+
+    def search_enchant_spell_trigger_chance(self, spellnames, table=''):
+        cond = self._cond
+        for spellname in spellnames.keys():
+            if spellname in cond:
+                sql = f'''
+                    select id, EnchantmentType_1,EffectPointsMin_1,EffectPointsMax_1,EffectArg_1,Name_deDE,Name_enCN,Name_zhCN,Name_enTW,Name_Mask,ItemVisual,Flags 
+                    from spellitemenchantment where id in (
+                        select EffectMiscValue1 from spell s where ({cond[spellname]})
+                    );
+                '''
+                self._instance.fast_select(sql)
+
+    def search_spell_by_enchant_spell(self, spellname, table=''):
+        cond = self._cond
+        sql_dbc = f'''
+            select s.id,s.SpellName4 as name,s.SpellRank4 as lvl,s.Effect1 as e1,s.Effect2 as e2,s.Effect3 as e3,s.EffectBasePoints1 as base1,s.EffectBasePoints2 as base2,s.EffectBasePoints3 as base3
+                ,s.effectapplyauraname1 as aura1,s.effectapplyauraname2 as aura2,s.effectapplyauraname3 as aura3
+                ,EffectAmplitude1 as amp1,EffectAmplitude2 as amp2
+                ,DurationIndex dur_idx
+                ,EffectTriggerSpell1 trig1,procchance trig_c,procflags proc_f,ProcCharges trig_t,EffectMiscValue1 as misc1
+                ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd,effectItemType1 eit,spellfamilyflags1 sff1,spellfamilyflags1 sff2,spellFamilyName sfn
+                from spell s
+                join (
+                    select EffectArg_1 id from spellitemenchantment ench
+                    join spell s on s.EffectMiscValue1=ench.id
+                    where ({cond[spellname]})
+                ) s1 on s1.id=s.id;
+        '''
+        sql_server = f'''
+            select DISTINCT s.entry id,l.name_loc4 name,l.nameSubtext_loc4 as lvl,s.Effect1 as e1,s.Effect2 as e2,s.Effect3 as e3,s.EffectBasePoints1 as base1,s.EffectBasePoints2 as base2,s.EffectBasePoints3 as base3
+            ,s.effectapplyauraname1 as aura1,s.effectapplyauraname2 as aura2,s.effectapplyauraname3 as aura3
+            ,EffectAmplitude1 as amp1,EffectAmplitude2 as amp2
+            ,DurationIndex dur_idx
+            ,EffectTriggerSpell1 trig1,procchance trig_c,procflags proc_f,ProcCharges trig_t,EffectMiscValue1 as misc1
+            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd,effectItemType1 eit,spellfamilyflags sff,spellFamilyName sfn
+            from spell_template s
+            JOIN locales_spell l ON s.entry = l.entry
+            join (
+                select EffectArg_1 id from spellitemenchantment ench
+                join spell_template s on s.EffectMiscValue1=ench.id
+                JOIN locales_spell l ON s.entry = l.entry
+                where ({cond_conv2server(cond[spellname])})
+            ) s1 on s1.id=s.entry;
+        '''
+        if table == 'spell':
+            sql = sql_dbc
+        elif table == 'spell_template':
+            sql = sql_server
+        elif table == '':
+            sql = [sql_dbc, sql_server]
+        if isinstance(sql, list):
+            for sql in sql:
+                self._instance.fast_select(sql)
+        else:
+            self._instance.fast_select(sql)
+
+# enum SpellFamily
+# {
+#     SPELLFAMILY_GENERIC     = 0,
+#     SPELLFAMILY_UNK1        = 1,                            // events, holidays
+#     // 2 - unused
+#     SPELLFAMILY_MAGE        = 3,
+#     SPELLFAMILY_WARRIOR     = 4,
+#     SPELLFAMILY_WARLOCK     = 5,
+#     SPELLFAMILY_PRIEST      = 6,
+#     SPELLFAMILY_DRUID       = 7,
+#     SPELLFAMILY_ROGUE       = 8,
+#     SPELLFAMILY_HUNTER      = 9,
+#     SPELLFAMILY_PALADIN     = 10,
+#     SPELLFAMILY_SHAMAN      = 11,
+#     SPELLFAMILY_UNK2        = 12,
+#     SPELLFAMILY_POTION      = 13,
+#     // 14 - unused
+#     SPELLFAMILY_DEATHKNIGHT = 15,
+#     // 16 - unused
+#     SPELLFAMILY_UNK3        = 17
+# };
