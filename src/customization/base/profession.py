@@ -4,7 +4,7 @@ class Helper:
     def __init__(self, instance, cond):
         self._instance = instance
         self._cond = cond
-    
+
     def _get_trainer_id(self, condition):
         sql = f'''
                 select c.entry,l.name_loc4,l.subname_loc4, c2.map,c2.position_x x,c2.position_y y,c2.position_z z from creature_template c
@@ -32,7 +32,7 @@ class Helper:
         if results is None:
             print(f'sql execute failed:\n    {sql}')
             return
-        
+
         spells = []
         for result in results:
             spells.append(result[3])

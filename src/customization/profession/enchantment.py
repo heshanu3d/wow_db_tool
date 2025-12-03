@@ -51,7 +51,7 @@ def muiti_enchantment_spell(instance, rate):
         id_EffectMisc = ids[1]
         gen_sqls.append(instance.update_item(id_EffectMisc, options=options_spim, table='spellitemenchantment', primary_key='id', gen_sql_mode=True))
         gen_sqls.append(instance.update_item(id_spell,      options=options_sp,   table='spell',                primary_key='id', gen_sql_mode=True))
-    
+
     instance.execute_multi_sqls(gen_sqls)
     # for sql in gen_sqls:
     #     print(sql)
@@ -59,7 +59,7 @@ def muiti_enchantment_spell(instance, rate):
 
 def customize(instance):
     print(f'{__name__:<45}start to customize!')
-    
+
     helper = Helper(instance)
     # 查找跟附魔相关的spell，方便一键生成学习脚本
     # helper.enchant_spell_finder()

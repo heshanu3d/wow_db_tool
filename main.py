@@ -15,13 +15,21 @@ if __name__ == "__main__":
     # customization.profession.engineering.customize(instance)
     # customization.profession.inscription.customize(instance)
     # customization.profession.jewel.customize(instance)
-    # customization.item.common.customize(instance)
     # customization.item.equipment.customize(instance)
     # customization.dungeon.common.customize(instance)
     # customization.dungeon.raid.customize(instance)
     # customization.spell.rogue.customize(instance)
 
+    # item customization
+    # customization.item.common.customize(instance)
+
+    # creature customization
+    # customization.creature.common.customize(instance)
+    customization.creature.vendor.customize(instance)
+
+    # profession customization
+    # customization.profession.common.customize(instance)
+    # customization.profession.tailor.customize(instance)
+
     # class customization
     customization.spell.shaman.customize(instance)
-    customization.profession.common.customize(instance)
-    customization.profession.tailor.customize(instance)

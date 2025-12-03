@@ -44,7 +44,7 @@ push_wow 20251106160849_world.sql /usr1/test/code/wow/migrations
 push_wow 20251106170051_world.sql /usr1/test/code/wow/migrations
 
 mysql -u mangos -p mangos < 20251103125545_world.sql
-or 
+or
 mysql -u mangos -p mangos
 source 20251103125545_world.sql
 
@@ -234,7 +234,7 @@ ln -sf /usr/lib/x86_64-linux-gnu/libmysqlclient.so.21 /usr/lib/x86_64-linux-gnu/
 
 sudo apt install libtbb-dev
 
-1. [Realmd.log]  ERROR: No valid realms specified. 
+1. [Realmd.log]  ERROR: No valid realms specified.
 on windows:
 SHOW COLUMNS FROM vmangos_realmd.realmlist;
 INSERT INTO vmangos_realmd.realmlist (name, address, port, timezone, realmbuilds) VALUES ('vmangos_1.12.1', '127.0.0.1', 8085, 1, '5875 6005 6141');
@@ -256,7 +256,7 @@ appeared after source code update, but db didn't update with the corresponding v
 cd sql/migrations
 
 mysql -u mangos -p mangos < 20251103125545_world.sql
-or 
+or
 mysql -u mangos -p
 source 20251103125545_world.sql
 ```

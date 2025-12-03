@@ -11,7 +11,7 @@ class Helper:
 
 def customize(instance):
     print(f'{__name__:<45}start to customize!')
-    
+
     helper = Helper(instance)
     # 查找跟炸弹相关的spell，方便一键生成学习脚本
     # helper.enchant_engineering_finder()

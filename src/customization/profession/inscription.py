@@ -54,7 +54,7 @@ def muiti_master_inspiration(instance, rate):
         id_EffectMisc = ids[1]
         gen_sqls.append(instance.update_item(id_EffectMisc, options=options_spim, table='spellitemenchantment', primary_key='id', gen_sql_mode=True))
         gen_sqls.append(instance.update_item(id_spell,      options=options_sp,   table='spell',                primary_key='id', gen_sql_mode=True))
-    
+
     # instance.execute_multi_sqls(gen_sqls)
     # for sql in gen_sqls:
     #     print(sql)

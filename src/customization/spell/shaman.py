@@ -51,7 +51,7 @@ cond = {
     '火舌武器_效果' : "s.id in (8026, 8028, 8029,10445,16343,16344)",
     '冰封武器_效果' : "s.id in (8034, 8037,10458,16352,16353)",
     '风怒武器_效果' : "s.id in (8233, 8236,10484,16361)",
- 
+
 
     # 火焰新星图腾 机制: e1=87 召唤misc1 的creature_template ct, ct.entry=s.misc1的生物释放ct.spell_id1的技能， ct.spell_id1 触发 trig1的技能，最终trig1技能造成伤害
     '火焰新星图腾'      : "s.spellname4='火焰新星图腾' and s.spellrank4 like '等级%' and startrecoverytime>0",

@@ -63,13 +63,13 @@ def customize(instance):
     # helper.search(all_spellnames)
 
     # 调整 采矿、熔炼、剥皮、采药、分解、全部瞬间完成
-    # mod.mod_cast_time(mod_cast_time_skills)
+    mod.mod_cast_time(mod_cast_time_skills)
     # 调整 钓鱼时间 30s -> 5s
-    # mod.mod_duration(mod_duration_skills)
+    mod.mod_duration(mod_duration_skills)
 
-    # draft_spell_cond = get_draft_spell_cond(instance)
+    draft_spell_cond = get_draft_spell_cond(instance)
     # helper.search_with_cond(draft_spell_cond)
     # test.mod_cast_time_with_condition('250ms', draft_spell_cond)
     # test.mod_cast_time_with_condition('30s', draft_spell_cond)
     # 调整所有图纸 学到的技能施法时间 为 250ms
-    # mod.mod_cast_time_with_condition('250ms', draft_spell_cond)
+    mod.mod_cast_time_with_condition('250ms', draft_spell_cond)

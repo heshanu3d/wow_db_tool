@@ -170,7 +170,7 @@ class Mysql:
                             elif opt[2][idx:] == '_div':
                                 return str(int(int(match.group(1)) / opt[1]))
                     results[opt[0]] = re.sub(f'(\d+)(\.\d+)?([{null_op_suffixs_regex}]?)', str_op, results[opt[0]])
-                    
+
     @db_operation_decorator
     def update_item(self, entry, options:list=[], table:str='', primary_key:str='', gen_sql_mode=False):
         _options = copy.deepcopy(options)
@@ -269,7 +269,7 @@ class Mysql:
         #     val = opt[1]
         #     if col in column_names_dict.keys():
         #         opt[0] = column_names_dict[col]
-        
+
 
         sql_1 = f'INSERT INTO {table} {s}'
         sql_2 = 'VALUES (' + ','.join(['%s' for i in range(c)]) + ');'
@@ -291,7 +291,7 @@ class Mysql:
         if isinstance(sqls, list):
             for sql in sqls:
                 for s in sql.split(';'):
-                    self._cursor.execute(s.strip())                
+                    self._cursor.execute(s.strip())
         else:
             for s in sqls.split(';'):
                 self._cursor.execute(s.strip())
@@ -389,7 +389,7 @@ class Mysql:
         else:
             self.gen_item_from_item_template('unk0')
         self.gen_csv_from_table('item')
-    
+
     def gen_sqlfile_from_sqls(self, filename, sqls:list):
         with open(filename+'.sql', 'w', encoding='utf-8') as f:
             f.writelines(sqls)
@@ -419,14 +419,14 @@ class Mysql:
         sql = f'''
             select i.entry,i.GemProperties,gem.SpellItemEnchantmentRef
             from item_template i
-            left join GemProperties gem on gem.id=i.GemProperties 
+            left join GemProperties gem on gem.id=i.GemProperties
             where class = 3 and Quality = {quality} and i.GemProperties!=0 and gem.SpellItemEnchantmentRef!=0;
         '''
         self._cursor.execute(sql)
         columns = self._cursor.fetchall()
         return columns
         # return [(column[0]) for column in columns]
-    
+
     def backup_table(self, table):
         sql = f'CREATE TABLE {table}_b AS SELECT * FROM {table};'
         self.execute_multi_sqls(sql)

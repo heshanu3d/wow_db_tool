@@ -14,7 +14,7 @@ class Helper:
 
 def customize(instance):
     print(f'{__name__:<45}start to customize!')
-    
+
     helper = Helper(instance)
     # 查找跟磨刀石相关的spell，方便一键生成学习脚本
     # helper.enchant_enchantstone_finder()

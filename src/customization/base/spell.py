@@ -614,7 +614,7 @@ class Helper:
         for spellname in spellnames.keys():
             if spellname in cond:
                 sql = f'''
-                    select id, EnchantmentType_1,EffectPointsMin_1,EffectPointsMax_1,EffectArg_1,Name_deDE,Name_enCN,Name_zhCN,Name_enTW,Name_Mask,ItemVisual,Flags 
+                    select id, EnchantmentType_1,EffectPointsMin_1,EffectPointsMax_1,EffectArg_1,Name_deDE,Name_enCN,Name_zhCN,Name_enTW,Name_Mask,ItemVisual,Flags
                     from spellitemenchantment where id in (
                         select EffectMiscValue1 from spell s where ({cond[spellname]})
                     );

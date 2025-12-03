@@ -93,12 +93,12 @@ def mod_gcd(instance, gcd_ms, spellnames):
 class Helper:
     def __init__(self, instance):
         self._instance = instance
-    
+
     def _search(self, condition):
         sql = f'''
             select s.id,s.SpellName4,s.SpellRank4,s.EffectBasePoints1,s.EffectBasePoints2,s.EffectBasePoints3
             ,CastingTimeIndex,StartRecoveryCategory,StartRecoveryTime
-            # ,SpellDescription4 
+            # ,SpellDescription4
             from spell s
             WHERE {condition};
         '''

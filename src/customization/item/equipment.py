@@ -105,7 +105,7 @@ def gen_item_update_v1(instance):
     # 紫装最多强化到+5
     for old_entry in instance.get_equipment_entry_by_quality(4):
         new_entry_ofs = add_update_item(instance, old_entry, new_entry_ofs, 5)
-    
+
     # 修复强化装备的名字: 原始名字->原始名字+强化等级， 如：豪华珠宝戒指+1，豪华珠宝戒指+2，豪华珠宝戒指+3，etc...
     fix_upitem_name(instance)
     instance.debug = _debug
