@@ -95,9 +95,7 @@ def sql_update_enchant_spell_trigger_chance(table, multi, cond, effect_type):
     return f'''
             update spellitemenchantment set
             EffectPointsMin_1=EffectPointsMin_1*{multi}, EffectPointsMin_2=EffectPointsMin_2*{multi},EffectPointsMin_3=EffectPointsMin_3*{multi}
-            where id in (
-                select EffectMiscValue1 from spell s where ({cond})
-            );
+            where ({cond});
     '''
 
 def sql_query(table, cond):
@@ -292,7 +290,8 @@ class Mod:
         cond = self._cond
         for spellname, trigger_time in spellnames.items():
             if spellname in cond.keys():
-                self.mod_effect_on_spell('spell',          trigger_time, cond[spellname], 6, sql_type='triggermod_trigger_time_time')
+                self.mod_effect_on_spell('spell',          trigger_time, cond[spellname], 6, sql_type='trigger_time')
+                self.mod_effect_on_spell('spell_template', trigger_time, cond[spellname], 6, sql_type='trigger_time')
 
     # 更改 冷却时间
     def mod_cooldown_time(self, spellnames):
@@ -384,7 +383,10 @@ class Mod:
         cond = self._cond
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
-                self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 6, sql_type='enchant_spell_trigger_chance')
+                condition = cond[spellname]
+                results = self._instance.execute_sql_with_retval(f'select EffectMiscValue1 from spell s where ({condition})')
+                entry_condition_str = ' or '.join([f"id={item[0]}" for item in results])
+                self.mod_effect_on_spell('spell',          multi_rate, entry_condition_str, 6, sql_type='enchant_spell_trigger_chance')
 # 减少技能cd
 # 天赋 effectItemType & spellfamilyflags 有值， 位于方式绑定技能
 # vmangos_mangos: spellfamilyName

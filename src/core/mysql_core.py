@@ -17,7 +17,7 @@ local_config_2 = {
     'host':'localhost',
     'user':'root',
     'password':'ascent',
-    'database':'vmangos_mangos'
+    'database':'vmangos_test_mangos'
 }
 
 remote_config_1 = {

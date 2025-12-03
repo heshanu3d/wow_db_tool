@@ -284,6 +284,21 @@ def mod_spell_16269(instance):
         # print(sqls)
         instance.execute_multi_sqls(sqls)
 
+def mod_element_weapon_duration(instance, multi):
+    weapon_skills = [
+        '石化武器',
+        '火舌武器',
+        '冰封武器',
+        '风怒武器',
+    ]
+    for spell in weapon_skills:
+        results = instance.execute_sql_with_retval(f'select id from spell s where ({cond[spell]})')
+        entry_condition_str = ' or '.join([f"id={item[0]}" for item in results])
+        sql = f'''
+            update spell_effect_mod set EffectBasePoints=(EffectBasePoints+1)*{multi} - 1
+            where ({entry_condition_str});
+        '''
+        instance.execute_multi_sqls(sql)
 
 def customize(instance):
     print(f'{__name__:<45}start to customize!')
@@ -303,7 +318,7 @@ def customize(instance):
     # test.mod_dot_interval({'烈焰震击':1.25})
     # test.mod_trigger_chance({'元素集中':2})
     # test.mod_duration({'闪电之盾' : '1800s'})
-    # test.mod_trigger_time({'闪电之盾' : 60})
+    test.mod_trigger_time({'闪电之盾' : 60})
     # test.mod_cooldown_time({'烈焰震击':2000, '火焰冲击':3000})
     # test.mod_gcd_time({"风暴打击": 100})
     # test.mod_trigger(mod_trigger_skills)
@@ -315,9 +330,10 @@ def customize(instance):
 
     helper.search([
         # # '双武器',
+        # '石化武器',
         # '速效毒药_伤害',
         # '速效毒药_几率',
-        '强化速效毒药',
+        # '强化速效毒药',
         # 'test1',
     ])
     # test.mod_enchant_spell_trigger_chance({'风怒武器': 1.5})
@@ -359,6 +375,8 @@ def customize(instance):
     # mod.mod_talent_extra_attack(mod_talent_extra_attack_skills)
     # 调整 萨满风怒武器触发概率
     # mod.mod_enchant_spell_trigger_chance(mod_enchant_spell_trigger_chance_skills)
+    # 调整 萨满 各 元素武器的 持续时间 至12倍
+    # mod_element_weapon_duration(instance, 12)
 
     # mod spell : 双手斧和锤
     # 使你可以使用双石化武器手斧和双手锤 -> 使你可以使用双手斧,双手锤和双手剑
