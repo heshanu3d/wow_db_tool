@@ -375,8 +375,9 @@ class Mod:
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
                 for table in ['spell', 'spell_template']:
+                    id_name = "s.entry" if table == 'spell_template' else "s.id"
                     results = self._instance.execute_sql_with_retval(sql_query_trigger(table, cond[spellname]))
-                    entry_condition_str = ' or '.join([f"s.entry={item[0]}" for item in results])
+                    entry_condition_str = ' or '.join([f"{id_name}={item[0]}" for item in results])
                     self.mod_effect_on_spell(table,          multi_rate, entry_condition_str, 6)
 
     def mod_enchant_spell_trigger_chance(self, spellnames):
@@ -453,6 +454,10 @@ class Test:
         self._helper.search_enchant_spell_trigger_chance(spellnames)
         self._mod.mod_enchant_spell_trigger_chance(spellnames)
         self._helper.search_enchant_spell_trigger_chance(spellnames)
+    def mod_trigger(self, spellnames):
+        self._helper.search_triggered_spell(spellnames)
+        self._mod.mod_trigger(spellnames)
+        self._helper.search_triggered_spell(spellnames)
 
 class Helper:
     def __init__(self, instance, cond):
@@ -503,6 +508,17 @@ class Helper:
                     self._search(cond[spellname])
                 if spellname in cond:
                     self._search_server(cond_conv2server(cond[spellname]))
+
+    def search_triggered_spell(self, spellnames):
+        cond = self._cond
+        for spellname, multi_rate in spellnames.items():
+            if spellname in cond.keys():
+                for table in ['spell', 'spell_template']:
+                    id_name = "s.entry" if table == 'spell_template' else "s.id"
+                    results = self._instance.execute_sql_with_retval(sql_query_trigger(table, cond[spellname]))
+                    entry_condition_str = ' or '.join([f"{id_name}={item[0]}" for item in results])
+                    search_func = self._search_server if table == 'spell_template' else self._search
+                    search_func(entry_condition_str)
 
     def search_with_cond(self, condition, table=''):
         if table == 'spell':
@@ -580,18 +596,18 @@ class Helper:
                 AND (s.spellfamilyflags & s2._effectItemType1) != 0;
         '''
         self._instance.fast_select(sql)
-    def search_affected_spell_by_talent(self, spellname, table=''):
+    def search_affected_spell_by_talent(self, spellnames, table=''):
         cond = self._cond
-        # for spellname in spellnames:
-        if table == 'spell':
-            if spellname in cond:
+        for spellname in spellnames:
+            if table == 'spell':
+                if spellname in cond:
+                    self._search_affected_spell_by_talent(cond[spellname])
+            elif table == 'spell_template':
+                if spellname in cond:
+                    self._search_affected_spell_by_talent_server(cond_conv2server(cond[spellname]))
+            elif table == '':
                 self._search_affected_spell_by_talent(cond[spellname])
-        elif table == 'spell_template':
-            if spellname in cond:
                 self._search_affected_spell_by_talent_server(cond_conv2server(cond[spellname]))
-        elif table == '':
-            self._search_affected_spell_by_talent(cond[spellname])
-            self._search_affected_spell_by_talent_server(cond_conv2server(cond[spellname]))
 
     def search_enchant_spell_trigger_chance(self, spellnames, table=''):
         cond = self._cond

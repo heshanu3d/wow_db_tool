@@ -60,7 +60,7 @@ cond = {
     '灼热图腾_伤害'     : "s.id in (22048, 6350, 6351, 6352,10435,10436)",
     '大地之力图腾'      : "s.spellname4='大地之力图腾' and s.spellrank4 like '等级%' and startrecoverytime>0",
     '大地之力图腾_Buff' : "s.id in (8076, 8162, 8163, 10441,25362)",
-    '地缚图腾'          : "s.spellname4='地缚图腾' and s.spellrank4 like '等级%' and startrecoverytime>0",
+    '地缚图腾'          : "s.spellname4='地缚图腾' and spellfamilyname=11",
     '石爪图腾'          : "s.spellname4='石爪图腾' and s.spellrank4 like '等级%' and startrecoverytime>0",
     '清毒图腾'          : "s.spellname4='大地之力图腾' and s.spellrank4 like '等级%' and startrecoverytime>0",
 
@@ -318,10 +318,10 @@ def customize(instance):
     # test.mod_dot_interval({'烈焰震击':1.25})
     # test.mod_trigger_chance({'元素集中':2})
     # test.mod_duration({'闪电之盾' : '1800s'})
-    test.mod_trigger_time({'闪电之盾' : 60})
+    # test.mod_trigger_time({'闪电之盾' : 60})
     # test.mod_cooldown_time({'烈焰震击':2000, '火焰冲击':3000})
     # test.mod_gcd_time({"风暴打击": 100})
-    # test.mod_trigger(mod_trigger_skills)
+    # test.mod_trigger({'先祖治疗' : 0.5,'治疗之道' : 0.5,})
 
     # helper.search(all_spellnames, 'spell')
     # helper.search(all_spellnames, 'spell_template')
@@ -335,16 +335,17 @@ def customize(instance):
         # '速效毒药_几率',
         # '强化速效毒药',
         # 'test1',
+        # '治疗之道',
     ])
     # test.mod_enchant_spell_trigger_chance({'风怒武器': 1.5})
     # test.mod_enchant_spell_trigger_chance({'速效毒药_几率' : 0.5})
     # test.mod_talent_extra_attack({'风怒武器_效果' : 2})
 
     # 查询 受指定天赋受益的技能
-    # helper.search_affected_spell_by_talent("强化治疗波")
-    # helper.search_affected_spell_by_talent("强化幽魂之狼")
-    # helper.search_affected_spell_by_talent("闪电掌握")
-    # helper.search_affected_spell_by_talent("强化火焰图腾")
+    # helper.search_affected_spell_by_talent(["强化治疗波"])
+    # helper.search_affected_spell_by_talent(["强化幽魂之狼"])
+    # helper.search_affected_spell_by_talent(["闪电掌握"])
+    # helper.search_affected_spell_by_talent(["强化火焰图腾"])
     # helper.search_spell_by_class('', 'spell')
     # helper.search_spell_by_class('', 'spell', True)
     # helper.search_spell_by_class('', 'spell_template')
