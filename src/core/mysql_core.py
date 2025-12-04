@@ -204,6 +204,26 @@ class Mysql:
 
         return update_sql
 
+    def copy_sql(self, old_entry, new_entry, table, primary_key):
+        column_names = self.get_column_names_and_cnt(table)
+        s = '('+','.join(column_names)+')'
+
+        sql = f"INSERT INTO {table} {s} "
+        sql = sql.replace(',rank,', ',`rank`,')
+
+        result = self.execute_sql_with_retval(f'SELECT * FROM {table} WHERE {primary_key} = {old_entry};')
+        if result:
+            row = list(result[0])
+            row[0] = new_entry
+            for i in range(len(row)):
+                if row[i] is None:
+                    row[i] = 'NULL'
+            row = tuple(row)
+            return f'{sql} VALUES{(*row,)};\n'
+    def copy(self, old_entry, new_entry, table, primary_key):
+        sql = self.copy_sql(old_entry, new_entry, table, primary_key)
+        self.execute_multi_sqls(sql)
+
     @db_operation_decorator
     def _copy_item(self, origin_entry, new_entry, sql, options, last_result, table='item_template', primary_key='entry', gen_sql_mode=False):
         if len(last_result) == 0:
