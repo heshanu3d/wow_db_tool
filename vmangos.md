@@ -243,6 +243,17 @@ on linux:
 SHOW COLUMNS FROM realmd.realmlist;
 INSERT INTO realmd.realmlist (name, address, port, timezone, realmbuilds) VALUES ('vmangos_1.12.1', '43.142.79.214', 8085, 1, '5875 6005 6141');
 
+1.1 局域网
+将127.0.0.1 改为 192.168.x.x
+
+1.2 内网穿透
+在 Sakura FRP 面板开启两个 TCP 隧道，记录下公网域名和公网端口。
+修改数据库 auth.realmlist：
+address = 你的公网域名 (例如 moe-1.sakurafrp.com)
+port = World 隧道的公网端口
+修改客户端 realmlist.wtf：
+set realmlist 你的公网域名:Auth隧道的公网端口
+
 
 2. [Mangos.log] .\5875/dbc is not found
 Note that the dbc path must also include the build number of the client from which the files were extracted. If you are unsure what is the exact build, you can see it in the lower left corner of the login screen. The build number of the 1.12.1 client is 5875.
