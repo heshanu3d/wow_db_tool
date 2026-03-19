@@ -33,4 +33,4 @@ if __name__ == "__main__":
     # customization.profession.tailor.customize(instance)
 
     # class customization
-    customization.spell.shaman.customize(instance)
+    customization.spell.rogue.customize(instance)

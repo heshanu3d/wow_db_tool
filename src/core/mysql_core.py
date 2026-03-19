@@ -20,18 +20,25 @@ local_config_2 = {
     'database':'vmangos_test_mangos'
 }
 
-remote_config_1 = {
+remote_config_2 = {
     'host':'192.168.71.71',
     'user':'root',
     'password':'root',
     'database':'acore_world'
 }
 
-local_configs = [local_config_1, local_config_2]
-remote_configs = [remote_config_1]
+remote_config_1 = {
+    'host':'172.20.1.193',
+    'user':'root',
+    'password':'ascent',
+    'database':'world'
+}
 
-# mysql_configs = remote_configs
-mysql_configs = local_configs
+local_configs = [local_config_1, local_config_2]
+remote_configs = [remote_config_1, remote_config_2]
+
+mysql_configs = remote_configs
+# mysql_configs = local_configs
 
 class Mysql:
     def __init__(self):
