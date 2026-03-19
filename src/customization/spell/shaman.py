@@ -9,6 +9,7 @@ from ..base import spell
 # 11346(effect=36 LEARN_SPELL) -> 11343(effect=24 CREATE_ITEM) -> 8928(item_template.id  spellid_1) -> 11340[modify duration in spell_effect_mod](effect=54, misc1) -> 625(SpellItemEnchantment.dbc effect_arg1) -> 11337
 
 cond = {
+    # 'test' : 's.id in (68,71)',
     # 'test' : 's.id in (674,1424,30798)',
     # 'test1' : 's.id in (8680, 8685, 8689,11335,11336,11337)',
     # '双武器'   : "s.spellname4='双武器'",
@@ -334,6 +335,7 @@ def customize(instance):
         # '速效毒药_伤害',
         # '速效毒药_几率',
         # '强化速效毒药',
+        # 'test',
         # 'test1',
         # '治疗之道',
     ])

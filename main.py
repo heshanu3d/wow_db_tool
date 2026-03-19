@@ -26,6 +26,7 @@ if __name__ == "__main__":
     # creature customization
     # customization.creature.common.customize(instance)
     # customization.creature.vendor.customize(instance)
+    # customization.creature.trainer.customize(instance)
 
     # profession customization
     # customization.profession.common.customize(instance)

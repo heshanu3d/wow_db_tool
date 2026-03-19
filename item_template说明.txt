@@ -108,9 +108,13 @@ Material : 物品材料， -1-消耗品（食物、试剂等），0-未定义，
 
 sheath : 武器放置的位置（外观）    1- 双手，背在后面尖向下    2- 杖，背在后面尖向上    3- 单手，在旁边    4- 盾，在后边    5- 附魔棒    6- 拳套、火把、锄头等
 
-RandomProperty : 随机属性，参考 item_enchantmeng_template 表的entry字段
+select entry,name,random_property from item_template where random_property > 0;
+|   727 | 卷刃的短剑                      |            5168 |
+select entry,name,random_property from item_template where entry=727;
+select * from item_enchantment_template where entry=5168;
+random_property : 随机属性，参考 item_enchantment_template 表的entry字段
 
-RandomSuffix : 随机后缀，参考 item_enchantmeng_template 表的entry字段
+RandomSuffix : 随机后缀，参考 item_enchantment_template 表的entry字段
 
 block :  格挡率
 
