@@ -1,13 +1,5 @@
 import inspect
 
-def cond_conv2server(cond):
-    condition = cond
-    condition = condition.replace('s.id', 's.entry')
-    condition = condition.replace('s.spellname4', 'l.name_loc4')
-    condition = condition.replace('s.spellrank4', 'l.nameSubtext_loc4')
-    condition = condition.replace('s.SpellDescription4', 'l.description_loc4')
-    return condition
-
 def sql_update_dmg(table, multi, cond, effect_type):
     sql = f'''
         update {table} s set s.EffectBasePoints1=(s.EffectBasePoints1+1)*{multi}-1
@@ -111,16 +103,8 @@ def sql_query_trigger(table, cond):
         select EffectTriggerSpell1 from {table} s
         where {cond}
     '''
-    sql_server = f'''
-        select DISTINCT EffectTriggerSpell1
-        from {table} s
-        INNER JOIN locales_spell l ON s.entry = l.entry
-        WHERE {cond_conv2server(cond)};
-    '''
     if table == 'spell':
         sql = sql_dbc
-    elif table == 'spell_template':
-        sql = sql_server
     else:
         return ''
     return sql
@@ -159,10 +143,6 @@ class Mod:
 
         if table == 'spell':
             instance.execute_multi_sqls(sql_update(table, multi, condition, effect_type))
-        elif table == 'spell_template':
-            results = instance.execute_sql_with_retval(sql_query(table, cond_conv2server(condition)))
-            entry_condition_str = ' or '.join([f"s.entry={item[0]}" for item in results])
-            instance.execute_multi_sqls(sql_update(table, multi, entry_condition_str, effect_type))
 
     # x倍率 放大 数值
     def mod_dmg(self, spellnames):
@@ -170,7 +150,6 @@ class Mod:
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 2)
-                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 2)
 
     # x倍率 放大 多倍攻击次数
     def mod_talent_extra_attack(self, spellnames):
@@ -178,7 +157,6 @@ class Mod:
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 19)
-                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 19)
 
     # x倍率 放大 法术效果
     def mod_talent_dummy(self, spellnames):
@@ -186,7 +164,6 @@ class Mod:
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 3)
-                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 3)
 
     # x倍率 放大 法术效果
     def mod_talent(self, spellnames):
@@ -194,7 +171,6 @@ class Mod:
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 6)
-                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 6)
 
     # x倍率 dot间隔
     def mod_dot_interval(self, spellnames):
@@ -202,7 +178,6 @@ class Mod:
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 6, sql_type='dot_interval')
-                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 6, sql_type='dot_interval')
 
     # x倍率 触发几率
     def mod_trigger_chance(self, spellnames):
@@ -210,7 +185,6 @@ class Mod:
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          multi_rate, cond[spellname], 6, sql_type='trigger_chance')
-                self.mod_effect_on_spell('spell_template', multi_rate, cond[spellname], 6, sql_type='trigger_chance')
 
     # 更改 持续时间
     def mod_duration(self, spellnames):
@@ -281,7 +255,6 @@ class Mod:
                 if duration in duration_dict:
                     duration_idx = duration_dict[duration]
                     self.mod_effect_on_spell('spell',          duration_idx, cond[spellname], 6, sql_type='duration')
-                    self.mod_effect_on_spell('spell_template', duration_idx, cond[spellname], 6, sql_type='duration')
                 else:
                     print(f'WARNING: {spellname} duration {duration} not in duration_dict')
 
@@ -291,7 +264,6 @@ class Mod:
         for spellname, trigger_time in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          trigger_time, cond[spellname], 6, sql_type='trigger_time')
-                self.mod_effect_on_spell('spell_template', trigger_time, cond[spellname], 6, sql_type='trigger_time')
 
     # 更改 冷却时间
     def mod_cooldown_time(self, spellnames):
@@ -299,7 +271,6 @@ class Mod:
         for spellname, cooldown_time in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          cooldown_time, cond[spellname], 6, sql_type='cooldown_time')
-                self.mod_effect_on_spell('spell_template', cooldown_time, cond[spellname], 6, sql_type='cooldown_time')
 
     # 更改 施法时间， 专业使用此函数
     def mod_cast_time_with_condition(self, cast_time, condition):
@@ -349,7 +320,6 @@ class Mod:
         if cast_time in cast_time_dict:
             cast_time_idx = cast_time_dict[cast_time]
             self.mod_effect_on_spell('spell',          cast_time_idx, condition, 6, sql_type='cast_time')
-            self.mod_effect_on_spell('spell_template', cast_time_idx, condition, 6, sql_type='cast_time')
         else:
             # print(f'WARNING: cast_time {cast_time} not in duration_dict')
             raise Exception(f'WARNING: cast_time {cast_time} not in duration_dict')
@@ -367,18 +337,17 @@ class Mod:
         for spellname, gcd_time in spellnames.items():
             if spellname in cond.keys():
                 self.mod_effect_on_spell('spell',          gcd_time, cond[spellname], 6, sql_type='gcd_time')
-                self.mod_effect_on_spell('spell_template', gcd_time, cond[spellname], 6, sql_type='gcd_time')
 
     # x倍率 触发技能的 效果
     def mod_trigger(self, spellnames):
         cond = self._cond
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
-                for table in ['spell', 'spell_template']:
-                    id_name = "s.entry" if table == 'spell_template' else "s.id"
-                    results = self._instance.execute_sql_with_retval(sql_query_trigger(table, cond[spellname]))
-                    entry_condition_str = ' or '.join([f"{id_name}={item[0]}" for item in results])
-                    self.mod_effect_on_spell(table,          multi_rate, entry_condition_str, 6)
+                table = 'spell'
+                id_name = "s.id"
+                results = self._instance.execute_sql_with_retval(sql_query_trigger(table, cond[spellname]))
+                entry_condition_str = ' or '.join([f"{id_name}={item[0]}" for item in results])
+                self.mod_effect_on_spell(table,          multi_rate, entry_condition_str, 6)
 
     def mod_enchant_spell_trigger_chance(self, spellnames):
         cond = self._cond
@@ -478,67 +447,36 @@ class Helper:
             WHERE {condition};
         '''
         self._instance.fast_select(sql)
-    def _search_server(self, condition):
-        # ,spelldescription4
-        # name_loc4,nameSubtext_loc4,description_loc4
-        sql = f'''
-            select DISTINCT s.entry id,l.name_loc4 name,l.nameSubtext_loc4 as lvl,s.Effect1 as e1,s.Effect2 as e2,s.Effect3 as e3,s.EffectBasePoints1 as base1,s.EffectBasePoints2 as base2,s.EffectBasePoints3 as base3
-            ,s.effectapplyauraname1 as aura1,s.effectapplyauraname2 as aura2,s.effectapplyauraname3 as aura3
-            ,EffectAmplitude1 as amp1,EffectAmplitude2 as amp2
-            ,DurationIndex dur_idx
-            ,EffectTriggerSpell1 trig1,procchance trig_c,procflags proc_f,ProcCharges trig_t,EffectMiscValue1 as misc1
-            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd,effectItemType1 eit,spellfamilyflags sff,spellFamilyName sfn
-            # ,description_loc4 d
-            from spell_template s
-            INNER JOIN locales_spell l ON s.entry = l.entry
-            WHERE {condition};
-        '''
-        self._instance.fast_select(sql)
+
     def search(self, spellnames=[], table=''):
         cond = self._cond
         for spellname in spellnames:
             if table == 'spell':
                 if spellname in cond:
                     self._search(cond[spellname])
-            elif table == 'spell_template':
-                if spellname in cond:
-                    self._search_server(cond_conv2server(cond[spellname]))
             elif table == '':
                 if spellname in cond:
                     self._search(cond[spellname])
-                if spellname in cond:
-                    self._search_server(cond_conv2server(cond[spellname]))
 
     def search_triggered_spell(self, spellnames):
         cond = self._cond
         for spellname, multi_rate in spellnames.items():
             if spellname in cond.keys():
-                for table in ['spell', 'spell_template']:
-                    id_name = "s.entry" if table == 'spell_template' else "s.id"
-                    results = self._instance.execute_sql_with_retval(sql_query_trigger(table, cond[spellname]))
-                    entry_condition_str = ' or '.join([f"{id_name}={item[0]}" for item in results])
-                    search_func = self._search_server if table == 'spell_template' else self._search
-                    search_func(entry_condition_str)
+                table = 'spell'
+                id_name = "s.id"
+                results = self._instance.execute_sql_with_retval(sql_query_trigger(table, cond[spellname]))
+                entry_condition_str = ' or '.join([f"{id_name}={item[0]}" for item in results])
+                self._search(entry_condition_str)
 
     def search_with_cond(self, condition, table=''):
         if table == 'spell':
             self._search(condition)
-        elif table == 'spell_template':
-            self._search_server(cond_conv2server(condition))
         elif table == '':
             self._search(condition)
-            self._search_server(cond_conv2server(condition))
 
     def search_spell_by_class(self, clz, table='', verbose=False):
         clz
         clz_id = 11
-        sql_server = f'''
-            select DISTINCT {"s.entry id," if verbose else ""} l.name_loc4 name,{"l.nameSubtext_loc4 as lvl," if verbose else ""}effectItemType1 eit,spellfamilyflags sff,spellFamilyName sfn
-            from spell_template s
-            JOIN locales_spell l ON s.entry = l.entry
-            where spellFamilyName={clz_id} and effectItemType1=0;
-            group by spellfamilyflags
-            '''
         sql_dbc = f'''
             select {"s.id," if verbose else ""} s.SpellName4 as name,{"s.SpellRank4 as lvl," if verbose else ""} effectItemType1 eit,spellfamilyflags1 sff1,spellfamilyflags1 sff2,spellFamilyName sfn
             from spell s
@@ -546,17 +484,8 @@ class Helper:
             group by spellfamilyflags1
             order by spellfamilyflags1 asc
             '''
-        if table == 'spell':
-            sql = sql_dbc
-        elif table == 'spell_template':
-            sql = sql_server
-        elif table == '':
-            sql = [sql_dbc, sql_server]
-        if isinstance(sql, list):
-            for sql in sql:
-                self._instance.fast_select(sql)
-        else:
-            self._instance.fast_select(sql)
+        sql = sql_dbc
+        self._instance.fast_select(sql)
 
     def _search_affected_spell_by_talent(self, condition):
         sql = f'''
@@ -576,38 +505,15 @@ class Helper:
                 AND (s.spellfamilyflags1 & s2._effectItemType1) != 0;
         '''
         self._instance.fast_select(sql)
-    def _search_affected_spell_by_talent_server(self, condition):
-        sql = f'''
-            select DISTINCT s.entry id,l.name_loc4 name,l.nameSubtext_loc4 as lvl,s.Effect1 as e1,s.Effect2 as e2,s.Effect3 as e3,s.EffectBasePoints1 as base1,s.EffectBasePoints2 as base2,s.EffectBasePoints3 as base3
-            ,s.effectapplyauraname1 as aura1,s.effectapplyauraname2 as aura2,s.effectapplyauraname3 as aura3
-            ,EffectAmplitude1 as amp1,EffectAmplitude2 as amp2
-            ,DurationIndex dur_idx
-            ,EffectTriggerSpell1 trig1,procchance trig_c,procflags proc_f,ProcCharges trig_t,EffectMiscValue1 as misc1
-            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd,effectItemType1 eit,spellfamilyflags sff,spellFamilyName sfn
-            # ,description_loc4 d
-            from spell_template s
-            JOIN locales_spell l ON s.entry = l.entry
-            JOIN (
-                SELECT s.SpellFamilyName _SpellFamilyName, s.effectItemType1 _effectItemType1
-                FROM spell_template s
-                JOIN locales_spell l ON s.entry = l.entry
-                WHERE {condition} limit 1
-            ) s2 ON s.spellFamilyName = s2._SpellFamilyName
-                AND (s.spellfamilyflags & s2._effectItemType1) != 0;
-        '''
-        self._instance.fast_select(sql)
+
     def search_affected_spell_by_talent(self, spellnames, table=''):
         cond = self._cond
         for spellname in spellnames:
             if table == 'spell':
                 if spellname in cond:
                     self._search_affected_spell_by_talent(cond[spellname])
-            elif table == 'spell_template':
-                if spellname in cond:
-                    self._search_affected_spell_by_talent_server(cond_conv2server(cond[spellname]))
             elif table == '':
                 self._search_affected_spell_by_talent(cond[spellname])
-                self._search_affected_spell_by_talent_server(cond_conv2server(cond[spellname]))
 
     def search_enchant_spell_trigger_chance(self, spellnames, table=''):
         cond = self._cond
@@ -637,33 +543,8 @@ class Helper:
                     where ({cond[spellname]})
                 ) s1 on s1.id=s.id;
         '''
-        sql_server = f'''
-            select DISTINCT s.entry id,l.name_loc4 name,l.nameSubtext_loc4 as lvl,s.Effect1 as e1,s.Effect2 as e2,s.Effect3 as e3,s.EffectBasePoints1 as base1,s.EffectBasePoints2 as base2,s.EffectBasePoints3 as base3
-            ,s.effectapplyauraname1 as aura1,s.effectapplyauraname2 as aura2,s.effectapplyauraname3 as aura3
-            ,EffectAmplitude1 as amp1,EffectAmplitude2 as amp2
-            ,DurationIndex dur_idx
-            ,EffectTriggerSpell1 trig1,procchance trig_c,procflags proc_f,ProcCharges trig_t,EffectMiscValue1 as misc1
-            ,CastingTimeIndex cast_idx,RecoveryTime cd, CategoryRecoveryTime cd2, StartRecoveryCategory gcd_c,StartRecoveryTime gcd,effectItemType1 eit,spellfamilyflags sff,spellFamilyName sfn
-            from spell_template s
-            JOIN locales_spell l ON s.entry = l.entry
-            join (
-                select EffectArg_1 id from spellitemenchantment ench
-                join spell_template s on s.EffectMiscValue1=ench.id
-                JOIN locales_spell l ON s.entry = l.entry
-                where ({cond_conv2server(cond[spellname])})
-            ) s1 on s1.id=s.entry;
-        '''
-        if table == 'spell':
-            sql = sql_dbc
-        elif table == 'spell_template':
-            sql = sql_server
-        elif table == '':
-            sql = [sql_dbc, sql_server]
-        if isinstance(sql, list):
-            for sql in sql:
-                self._instance.fast_select(sql)
-        else:
-            self._instance.fast_select(sql)
+        sql = sql_dbc
+        self._instance.fast_select(sql)
 
 # enum SpellFamily
 # {
