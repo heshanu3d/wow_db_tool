@@ -83,7 +83,7 @@ spellid_1 : 法术编号（对应SPELL.DBC第一列）
 spelltrigger_1 : 法术触发类型，0-使用，1-装备生效（被动），2-击中时可能，4-灵魂石，5-马上使用，无延迟，6-学习法术编号
 spellcharges_1 : 使用次数，如果为0，表示无限使用；如果是负数，表示使用次数为0时就删除该物品；如果是正数，使用次数为0时不删除物品；
 spellppmRate_1 : 触发概率，每分钟触发多少次，
-spelltrigger_1必须为2
+spelltrigger_1 必须为2
 spellcooldown_1 : 技能冷却时间
 spellcategory_1 : 技能族
 spellcategorycooldown_1 : 技能族冷却时间

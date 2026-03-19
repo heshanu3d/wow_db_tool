@@ -8,7 +8,16 @@ cond = {
     '采集草药' : "s.spellname4='采集草药' and Effect1=33 and Effect2=118",
     '分解' : "s.spellname4='分解'",
     '钓鱼' : "s.spellname4='钓鱼' and Effect1=50 and Effect2=118",
-    '图样' : "s.spellname4 like'%图样%' and s.effect1=36",
+}
+
+item_cond = {
+    '图样' : "name like'%图样%' ",
+    '图鉴' : "name like'%图鉴%' ",
+    '食谱' : "name like'%食谱%' ",
+    '公式：' : "name like'%公式：%' ",
+    '配方：' : "name like'%配方：%' ",
+    '设计图' : "name like'%设计图%' ",
+    '结构图' : "name like'%结构图%' ",
 }
 
 all_spellnames = cond.keys()
@@ -27,19 +36,39 @@ mod_duration_skills = {
 
 # 获取 所有图纸学到 的技能, eg: 图样：邪恶皮甲
 def get_draft_spell(instance):
-    sql = f'''
-            select s.id,s.spellname4,s.castingtimeindex,s.effecttriggerspell1,t.castingtimeindex from spell s
-            join spell t on t.id=s.effecttriggerspell1
-            where ({cond['图样']});
-    '''
-    results = instance.execute_sql_with_retval(sql)
-    if results is None:
-        print(f'sql execute failed:\n    {sql}')
-        return
+    # sql = f'''
+    #         select s.id,s.spellname4,s.castingtimeindex,s.effecttriggerspell1,t.castingtimeindex from spell s
+    #         join spell t on (t.id=s.effecttriggerspell1 or t.id=s.effecttriggerspell2 or t.id=s.effecttriggerspell3)
+    #         where ({item_cond['图样']});
+    # '''
+
+    # sql = f'''
+    #             select entry, name, spellid_1,spelltrigger_1,spellid_2,spelltrigger_2 from item_template
+    #             where (spellid_1=483 and spelltrigger_2=6);
+    #     '''
+    # instance.fast_select(sql)
+    # results = instance.execute_sql_with_retval(sql)
+    # spells = []
+    # for result in results:
+    #     spells.append(result[1])
+    # print(spells, len(spells))
+    # return
 
     spells = []
-    for result in results:
-        spells.append(result[3])
+    for i in ['图样', '图鉴', '设计图', '结构图', '公式：', '食谱', '配方：']:
+        sql = f'''
+                select entry, name, spellid_1,spelltrigger_1,spellid_2,spelltrigger_2 from item_template
+                where ({item_cond[i]} and spellid_1=483 and spelltrigger_2=6);
+        '''
+        # instance.fast_select(sql)
+        results = instance.execute_sql_with_retval(sql)
+        if results is None:
+            print(f'sql execute failed:\n    {sql}')
+            return
+
+        for result in results:
+            spells.append(result[4])
+    # print(spells, len(spells))
     return spells
 
 def get_draft_spell_cond(instance):
@@ -59,7 +88,6 @@ def customize(instance):
 
     # test.mod_cast_time({'采集草药' : '5000ms'})
     # test.mod_duration({'钓鱼' : '30s'})
-    # helper.search(['图样'])
     # helper.search(all_spellnames)
 
     # 调整 采矿、熔炼、剥皮、采药、分解、全部瞬间完成

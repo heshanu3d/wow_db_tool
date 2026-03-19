@@ -82,4 +82,4 @@ def customize(instance):
     # test.mod_gcd_time(mod_gcd_time_skills)
 
     # 调整 部分盗贼技能的 gcd 时间
-    # mod.mod_gcd_time(mod_gcd_time_skills)
+    mod.mod_gcd_time(mod_gcd_time_skills)
