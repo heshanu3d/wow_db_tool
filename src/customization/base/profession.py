@@ -7,8 +7,7 @@ class Helper:
 
     def _get_trainer_id(self, condition):
         sql = f'''
-                select c.entry,l.name_loc4,l.subname_loc4, c2.map,c2.position_x x,c2.position_y y,c2.position_z z from creature_template c
-                inner join locales_creature l on c.entry=l.entry
+                select c.entry,c.name, c.subname, c2.map,c2.position_x x,c2.position_y y,c2.position_z z from creature_template c
                 inner join creature c2 on c2.id=c.entry
                 WHERE {condition};
         '''
@@ -64,7 +63,12 @@ class Helper:
 
         return spells
 
-    def get_trainer_spell_cond(self, npc_subname):
-        spells = self.get_trainer_spell(npc_subname)
+    def get_trainer_spell_cond(self, npc_subnames: list):
+        spells = []
+        for npc_subname in npc_subnames:
+            for spell in self.get_trainer_spell(npc_subname):
+                if spell not in spells:
+                    spells.append(spell)
+
         spells_condition = ' or '.join([f"s.id={item}" for item in spells])
         return f"({spells_condition}) and s.castingtimeindex > 1"
