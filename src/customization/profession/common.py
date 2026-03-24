@@ -160,4 +160,6 @@ def customize(instance):
     # test.mod_cast_time_with_condition('250ms', profession_spell_cond)
     # test.mod_cast_time_with_condition('30s', profession_spell_cond)
     # 调整所有专业技能施法时间 为 250ms
+    # >> 如果报错"据库操作错误：1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ') and s.castingtimeindex > 1)' at line 2"
+    # >> 是因为没有使用 WoW Spell Editor 导入 skilllineability 表
     mod.mod_cast_time_with_condition('250ms', profession_spell_cond)
