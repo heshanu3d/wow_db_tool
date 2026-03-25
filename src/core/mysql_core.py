@@ -1,8 +1,19 @@
-import mysql.connector, csv, time, re, copy, tabulate
+import mysql.connector, csv, time, re, copy, tabulate, os
 from mysql.connector import Error
 from functools import wraps
 
 fast_select_f = open('tmp.txt', 'a', encoding='utf-8')
+
+record_file = 'sql_record.txt'
+sql_set = set()
+if not os.path.exists(record_file):
+    with open(record_file, 'w', encoding='utf-8') as f:
+        pass
+with open(record_file, 'r', encoding='utf-8') as f:
+    full_content = f.read()
+    sql_set = {item.strip() for item in full_content.split(';') if item.strip()}
+
+sql_records_f = open(record_file, 'w', encoding='utf-8')
 
 # cloud server
 local_config_1 = {
@@ -318,10 +329,14 @@ class Mysql:
         if isinstance(sqls, list):
             for sql in sqls:
                 for s in sql.split(';'):
-                    self._cursor.execute(s.strip())
+                    if s.strip():
+                        self._cursor.execute(s.strip())
+                        sql_records_f.write(s.strip() + ';\n')
         else:
             for s in sqls.split(';'):
-                self._cursor.execute(s.strip())
+                if s.strip():
+                    self._cursor.execute(s.strip())
+                    sql_records_f.write(s.strip() + ';\n')
         self._connection.commit()
 
     @db_operation_decorator_no_verbose
