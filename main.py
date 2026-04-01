@@ -38,3 +38,4 @@ if __name__ == "__main__":
     # class customization
     # customization.spell.rogue.customize(instance)
     # customization.spell.dk.customize(instance)
+    # customization.spell.priest.customize(instance)

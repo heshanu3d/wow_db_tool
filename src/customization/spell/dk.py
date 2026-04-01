@@ -92,11 +92,11 @@ def customize(instance):
 
     # helper.search(all_spellnames)
 
-    test.mod_duration({'寒冬号角' : '3600s'})
+    # test.mod_duration({'寒冬号角' : '3600s'})
 
     # test.mod_gcd_time(mod_gcd_time_skills)
 
     # 调整 部分死亡骑士技能的 gcd 时间
-    # mod.mod_gcd_time(mod_gcd_time_skills)
+    mod.mod_gcd_time(mod_gcd_time_skills)
     # 调整 部分死亡骑士技能持续时间至指定数值
-    # mod.mod_duration(mod_duration_skills)
+    mod.mod_duration(mod_duration_skills)
