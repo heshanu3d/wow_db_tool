@@ -114,7 +114,9 @@ mod_duration_skills = {
     '暗影恶魔'   : '300s',
 
     '真言术：盾' : '1800s',
+    '恢复'       : '1800s',
 
+    '神圣之火' : '1800s',
     '暗言术：痛' : '1800s',
     '噬灵疫病'   : '1800s',
     '吸血鬼之触' : '1800s',
@@ -153,6 +155,7 @@ def customize(instance):
     test = Test(helper, mod)
 
     # helper.search(all_spellnames)
+    # helper.search(['神圣之火'])
 
     # test.mod_gcd_time(mod_gcd_time_skills)
 
