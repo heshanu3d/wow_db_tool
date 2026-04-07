@@ -10,16 +10,16 @@ def mod_quest_request_item_count(instance):
     # ''')
     sql = ''' UPDATE quest_template
                 SET 
-                    RequiredItemCount1 = LEAST(RequiredItemCount1, 5),
-                    RequiredItemCount2 = LEAST(RequiredItemCount2, 5),
-                    RequiredItemCount3 = LEAST(RequiredItemCount3, 5),
-                    RequiredItemCount4 = LEAST(RequiredItemCount4, 5),
-                    RequiredItemCount5 = LEAST(RequiredItemCount5, 5),
-                    RequiredItemCount6 = LEAST(RequiredItemCount6, 5),
-                    RequiredNpcOrGoCount1 = LEAST(RequiredNpcOrGoCount1, 5),
-                    RequiredNpcOrGoCount2 = LEAST(RequiredNpcOrGoCount2, 5),
-                    RequiredNpcOrGoCount3 = LEAST(RequiredNpcOrGoCount3, 5),
-                    RequiredNpcOrGoCount4 = LEAST(RequiredNpcOrGoCount4, 5);
+                    RequiredItemCount1    = LEAST(RequiredItemCount1,    2),
+                    RequiredItemCount2    = LEAST(RequiredItemCount2,    2),
+                    RequiredItemCount3    = LEAST(RequiredItemCount3,    2),
+                    RequiredItemCount4    = LEAST(RequiredItemCount4,    2),
+                    RequiredItemCount5    = LEAST(RequiredItemCount5,    2),
+                    RequiredItemCount6    = LEAST(RequiredItemCount6,    2),
+                    RequiredNpcOrGoCount1 = LEAST(RequiredNpcOrGoCount1, 2),
+                    RequiredNpcOrGoCount2 = LEAST(RequiredNpcOrGoCount2, 2),
+                    RequiredNpcOrGoCount3 = LEAST(RequiredNpcOrGoCount3, 2),
+                    RequiredNpcOrGoCount4 = LEAST(RequiredNpcOrGoCount4, 2);
     '''
     instance.execute_multi_sqls(sql)
 

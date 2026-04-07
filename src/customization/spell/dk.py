@@ -35,6 +35,21 @@ cond = {
     '冰冷触摸': "s.spellname4='冰冷触摸'     and s.spellrank4 like '等级%' and Effect2=64",
     '符文打击': "s.spellname4='符文打击'     and s.spellrank4 like '等级%'",
     '凛风冲击': "s.spellname4='凛风冲击'     and s.spellrank4 like '等级%'",
+
+
+    '瑞文戴尔之怒': "s.spellname4='瑞文戴尔之怒' and s.spellrank4 like '等级%'",
+    '血染之刃': "s.spellname4='血染之刃' and s.spellrank4 like '等级%'",
+    '骨疽': "s.spellname4='骨疽' and s.spellrank4 like '等级%'",
+    '强化邪恶灵气': "s.spellname4='强化邪恶灵气' and s.spellrank4 like '等级%'",
+    '蔓延': "s.spellname4='蔓延' and s.spellrank4 like '等级%'",
+    '病变': "s.spellname4='病变' and s.spellrank4 like '等级%'",
+    '邪恶虫群': "s.id=49194",
+
+    '黑色热疫': "s.spellname4='黑色热疫' and (s.id=51726 or s.id=51734 or s.id=51735)",
+
+    '冰冷之爪': "s.id=50882 or s.id=58575 or s.id=58576 or s.id=58577 or s.id=58578",
+    '利刃屏障': "s.id=51789 or s.id=64855 or s.id=64856 or s.id=64858 or s.id=64859",
+    '孤寂': "s.id=63583 or s.id=66800 or s.id=66801 or s.id=66802 or s.id=66803",
 }
 
 all_spellnames = cond.keys()
@@ -77,6 +92,22 @@ mod_gcd_time_skills = {
 
 mod_duration_skills = {
     '寒冬号角' : '3600s',
+    '孤寂'     : '300s',
+    '冰冷之爪' : '300s',
+    '利刃屏障' : '60s',
+}
+
+mod_talent_skills = {
+    '邪恶虫群'     : 3,
+    '黑色热疫'     : 3,
+    '病变'         : 3,
+    '骨疽'         : 3,
+    '蔓延'         : 4,
+    '强化邪恶灵气' : 2,
+}
+
+mod_trigger_chance_skills = {
+    '血染之刃' : 3,
 }
 
 def customize(instance):
@@ -91,6 +122,7 @@ def customize(instance):
     test = Test(helper, mod)
 
     # helper.search(all_spellnames)
+    # helper.search(['蔓延'])
 
     # test.mod_duration({'寒冬号角' : '3600s'})
 
@@ -100,3 +132,7 @@ def customize(instance):
     mod.mod_gcd_time(mod_gcd_time_skills)
     # 调整 部分死亡骑士技能持续时间至指定数值
     mod.mod_duration(mod_duration_skills)
+    # 调整 部分死亡骑士天赋加成至 x倍
+    mod.mod_talent(mod_talent_skills)
+    # 调整 部分死亡骑士技能触发几率至 x倍
+    mod.mod_trigger_chance(mod_trigger_chance_skills)
