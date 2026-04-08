@@ -26,9 +26,9 @@ def sql_update_trigger_chance(table, multi, cond, effect_type):
         WHERE
         s.procchance!=-1 and s.procchance!=0 and
         (
-            (s.Effect1={effect_type} and s.effectapplyauraname1=42 and s.EffectTriggerSpell1>0) or
-            (s.Effect2={effect_type} and s.effectapplyauraname2=42 and s.EffectTriggerSpell2>0) or
-            (s.Effect3={effect_type} and s.effectapplyauraname3=42 and s.EffectTriggerSpell3>0)
+            (s.Effect1={effect_type} and (s.effectapplyauraname1=42 or s.effectapplyauraname1=4) and s.EffectTriggerSpell1>0) or
+            (s.Effect2={effect_type} and (s.effectapplyauraname2=42 or s.effectapplyauraname2=4) and s.EffectTriggerSpell2>0) or
+            (s.Effect3={effect_type} and (s.effectapplyauraname3=42 or s.effectapplyauraname3=4) and s.EffectTriggerSpell3>0)
         ) and ({cond});
     '''
     return sql

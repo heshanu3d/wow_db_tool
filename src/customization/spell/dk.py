@@ -38,6 +38,8 @@ cond = {
 
 
     '瑞文戴尔之怒': "s.spellname4='瑞文戴尔之怒' and s.spellrank4 like '等级%'",
+    '爆发': "s.spellname4='爆发' and s.spellrank4 like '等级%'",
+    '险恶攻击': "s.spellname4='险恶攻击' and s.spellrank4 like '等级%'",
     '血染之刃': "s.spellname4='血染之刃' and s.spellrank4 like '等级%'",
     '骨疽': "s.spellname4='骨疽' and s.spellrank4 like '等级%'",
     '强化邪恶灵气': "s.spellname4='强化邪恶灵气' and s.spellrank4 like '等级%'",
@@ -94,16 +96,18 @@ mod_duration_skills = {
     '寒冬号角' : '3600s',
     '孤寂'     : '300s',
     '冰冷之爪' : '300s',
-    '利刃屏障' : '60s',
+    '利刃屏障' : '300s',
 }
 
 mod_talent_skills = {
-    '邪恶虫群'     : 3,
+    '邪恶虫群'     : 1.5,
+    '病变'         : 1.5,
     '黑色热疫'     : 3,
-    '病变'         : 3,
     '骨疽'         : 3,
     '蔓延'         : 4,
     '强化邪恶灵气' : 2,
+    '险恶攻击'     : 2,
+    '爆发'         : 2,
 }
 
 mod_trigger_chance_skills = {
@@ -122,10 +126,10 @@ def customize(instance):
     test = Test(helper, mod)
 
     # helper.search(all_spellnames)
-    # helper.search(['蔓延'])
+    # helper.search(['爆发'])
 
     # test.mod_duration({'寒冬号角' : '3600s'})
-
+    # test.mod_talent({'爆发': 2,})
     # test.mod_gcd_time(mod_gcd_time_skills)
 
     # 调整 部分死亡骑士技能的 gcd 时间
