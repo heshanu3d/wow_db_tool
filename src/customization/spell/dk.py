@@ -38,6 +38,7 @@ cond = {
 
 
     '瑞文戴尔之怒': "s.spellname4='瑞文戴尔之怒' and s.spellrank4 like '等级%'",
+    '符文能量掌握': "s.spellname4='符文能量掌握' and s.spellrank4 like '等级%'",
     '爆发': "s.spellname4='爆发' and s.spellrank4 like '等级%'",
     '险恶攻击': "s.spellname4='险恶攻击' and s.spellrank4 like '等级%'",
     '血染之刃': "s.spellname4='血染之刃' and s.spellrank4 like '等级%'",
@@ -52,6 +53,7 @@ cond = {
     '冰冷之爪': "s.id=50882 or s.id=58575 or s.id=58576 or s.id=58577 or s.id=58578",
     '利刃屏障': "s.id=51789 or s.id=64855 or s.id=64856 or s.id=64858 or s.id=64859",
     '孤寂': "s.id=63583 or s.id=66800 or s.id=66801 or s.id=66802 or s.id=66803",
+    '狂乱': "s.id=49016",
 }
 
 all_spellnames = cond.keys()
@@ -75,7 +77,7 @@ mod_gcd_time_skills = {
     '反魔法护罩'   : 0,
     '符文武器增效' : 0,
 
-    '湮灭'         : 250,
+    '湮没'         : 250,
     '邪爆'         : 250,
     '凋零缠绕'     : 250,
     '暗影打击'     : 250,
@@ -97,6 +99,7 @@ mod_duration_skills = {
     '孤寂'     : '300s',
     '冰冷之爪' : '300s',
     '利刃屏障' : '300s',
+    '狂乱'     : '300s',
 }
 
 mod_talent_skills = {
@@ -108,6 +111,7 @@ mod_talent_skills = {
     '强化邪恶灵气' : 2,
     '险恶攻击'     : 2,
     '爆发'         : 2,
+    '符文能量掌握' : 4,
 }
 
 mod_trigger_chance_skills = {
@@ -126,11 +130,12 @@ def customize(instance):
     test = Test(helper, mod)
 
     # helper.search(all_spellnames)
-    # helper.search(['爆发'])
+    # helper.search(['狂乱'])
 
     # test.mod_duration({'寒冬号角' : '3600s'})
-    # test.mod_talent({'爆发': 2,})
-    # test.mod_gcd_time(mod_gcd_time_skills)
+    # test.mod_talent({'符文能量掌握': 4,})
+    # test.mod_duration({'狂乱'     : '300s',})
+    # test.mod_gcd_time({'湮没': 250})
 
     # 调整 部分死亡骑士技能的 gcd 时间
     mod.mod_gcd_time(mod_gcd_time_skills)
