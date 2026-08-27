@@ -360,10 +360,13 @@ class SkillConfigView(tk.Frame):
                 row, text=skill, anchor="w", bg=row_bg, fg=COLORS["ink"],
                 font=("Noto Sans CJK SC", 9),
             ).pack(side="left", fill="x", expand=True)
-            value_box = tk.Frame(row, bg=row_bg, width=210)
+            # Do not disable geometry propagation here. A Frame with only a
+            # configured width otherwise keeps Tk's default 1px height and clips
+            # the Entry completely, making its bound default value invisible and
+            # preventing mouse interaction.
+            value_box = tk.Frame(row, bg=row_bg)
             value_box.pack(side="right", padx=(8, 14), pady=6)
-            value_box.pack_propagate(False)
-            ttk.Entry(value_box, textvariable=self.value_vars[key], width=12).pack(side="left", fill="x", expand=True)
+            ttk.Entry(value_box, textvariable=self.value_vars[key], width=14).pack(side="left")
             tk.Label(
                 value_box, text=self.active_group.value_label, width=7, anchor="w",
                 bg=row_bg, fg=COLORS["muted"], font=("Noto Sans CJK SC", 8),

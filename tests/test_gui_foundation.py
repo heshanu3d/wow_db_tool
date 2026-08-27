@@ -258,6 +258,17 @@ class GuiFoundationTests(unittest.TestCase):
             checks = [widget for widget in descendants(view) if isinstance(widget, tk.Checkbutton)]
             self.assertEqual(len(entries), len(view.configuration[first_group.config_name]))
             self.assertEqual(len(checks), len(view.configuration[first_group.config_name]))
+            self.assertTrue(all(entry.winfo_height() > 1 for entry in entries))
+
+            first_skill = next(iter(view.configuration[first_group.config_name]))
+            first_entry = entries[0]
+            self.assertEqual(
+                first_entry.get(),
+                view.configuration[first_group.config_name][first_skill]["value"],
+            )
+            first_entry.delete(0, "end")
+            first_entry.insert(0, "3.25")
+            self.assertEqual(view.value_vars[(first_group.config_name, first_skill)].get(), "3.25")
 
             view.group_list.selection_clear(0, "end")
             view.group_list.selection_set(view.group_list.size() - 1)
