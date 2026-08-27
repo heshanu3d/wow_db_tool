@@ -1,19 +1,11 @@
 import mysql.connector, csv, time, re, copy, tabulate, os
+from pathlib import Path
 from mysql.connector import Error
 from functools import wraps
 
-fast_select_f = open('tmp.txt', 'a', encoding='utf-8')
-
-record_file = 'sql_record.txt'
-sql_set = set()
-if not os.path.exists(record_file):
-    with open(record_file, 'w', encoding='utf-8') as f:
-        pass
-with open(record_file, 'r', encoding='utf-8') as f:
-    full_content = f.read()
-    sql_set = {item.strip() for item in full_content.split(';') if item.strip()}
-
-sql_records_f = open(record_file, 'w', encoding='utf-8')
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SQL_RECORD_FILE = PROJECT_ROOT / 'sql_record.txt'
+DEFAULT_SELECT_LOG_FILE = PROJECT_ROOT / 'tmp.txt'
 
 # cloud server
 local_config_1 = {
@@ -52,68 +44,75 @@ mysql_configs = remote_configs
 # mysql_configs = local_configs
 
 class Mysql:
-    def __init__(self):
+    def __init__(self, config=None, configs=None, strict=False, auto_connect=True, sql_record_file=None):
         self.debug = True
+        self.strict = strict
         self._status = False
         self._connection = None
-        self._config = None
+        self._config = dict(config) if config else None
+        self._configs = list(configs or mysql_configs)
         self._cursor = None
         self._sqls = []
         self._entrys = []
-        self.connect()
+        self.sql_record_file = Path(sql_record_file or DEFAULT_SQL_RECORD_FILE)
+        if auto_connect:
+            if not self.connect():
+                raise ConnectionError('无法连接任何已配置的 MySQL 数据库')
+            self.close()
+
+    def close(self):
+        if self._cursor:
+            try:
+                self._cursor.close()
+            except Exception:
+                pass
+            self._cursor = None
         if self._connection and self._connection.is_connected():
-            self._cursor.close()
             self._connection.close()
-        else:
-            exit(-1)
-    def connect(self, configs=mysql_configs):
+
+    def connect(self, configs=None):
         def _connect(config):
             try:
-                self._connection = mysql.connector.connect(
-                    host=config['host'],
-                    user=config['user'],
-                    password=config['password'],
-                    database=config['database'],
-                    auth_plugin='mysql_native_password',
-                )
+                self._connection = mysql.connector.connect(**config)
                 if self._connection.is_connected():
                     self._db_info = self._connection.get_server_info()
                     if not self._status:
                         print(f"----------**---------\n成功连接到MySQL数据库，版本：{self._db_info}\n----------**---------")
                     self._status = True
                     self._cursor = self._connection.cursor()
-                    self._config = config
+                    self._config = dict(config)
                     return True
             except Error as e:
                 print(f"数据库连接错误：{e}")
                 return False
-        if self._config:
-            _connect(self._config)
-        else:
-            for config in configs:
-                if _connect(config):
-                    break
+            return False
+
+        candidates = [self._config] if self._config else list(configs or self._configs)
+        for config in candidates:
+            if config and _connect(config):
+                return True
+        return False
+
+    def _on_db_error(self, error):
+        print(f"数据库操作错误：{error}")
+        if self.strict:
+            raise RuntimeError(str(error)) from error
 
     def db_operation_decorator(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             start_time = time.time()
-            self.connect()
             ret = None
             try:
-                if self._connection.is_connected():
+                if self.connect() and self._connection.is_connected():
                     ret = func(self, *args, **kwargs)
                 else:
-                    print('Mysql is not connected')
+                    raise ConnectionError('Mysql is not connected')
             except Error as e:
-                print(f"数据库操作错误：{e}")
+                self._on_db_error(e)
             finally:
-                # 关闭游标和连接
-                if self._connection and self._connection.is_connected():
-                    self._cursor.close()
-                    self._connection.close()
-            end_time = time.time()
-            delta_time = end_time - start_time
+                self.close()
+            delta_time = time.time() - start_time
             if delta_time > 0 and self.debug:
                 print(f'{func.__name__} 耗时 {delta_time}秒')
             return ret
@@ -122,20 +121,16 @@ class Mysql:
     def db_operation_decorator_no_verbose(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
-            self.connect()
             ret = None
             try:
-                if self._connection.is_connected():
+                if self.connect() and self._connection.is_connected():
                     ret = func(self, *args, **kwargs)
                 else:
-                    print('Mysql is not connected')
+                    raise ConnectionError('Mysql is not connected')
             except Error as e:
-                print(f"数据库操作错误：{e}")
+                self._on_db_error(e)
             finally:
-                # 关闭游标和连接
-                if self._connection and self._connection.is_connected():
-                    self._cursor.close()
-                    self._connection.close()
+                self.close()
             return ret
         return wrapper
 
@@ -299,8 +294,10 @@ class Mysql:
         s = '('+','.join(column_names)+')'
         c = len(column_names)
 
-        options.append([primary_key, new_entry])
-        self.conv_key_2_idx(options, column_names)
+        # 不修改调用方传入的配置；宝石/装备生成会在循环中复用同一组选项。
+        _options = copy.deepcopy(options)
+        _options.append([primary_key, new_entry])
+        self.conv_key_2_idx(_options, column_names)
         # column_names_dict = {item.lower(): idx for idx, item in enumerate(column_names)}
         # for opt in options:
         #     col = opt[0].lower()
@@ -313,16 +310,21 @@ class Mysql:
         sql_2 = 'VALUES (' + ','.join(['%s' for i in range(c)]) + ');'
         sql_insert = f'{sql_1} {sql_2}'
 
-        _sql, _vals = self._copy_item(origin_entry, new_entry, sql_insert, options, last_result, table, primary_key, gen_sql_mode=gen_sql_mode)
+        _sql, _vals = self._copy_item(origin_entry, new_entry, sql_insert, _options, last_result, table, primary_key, gen_sql_mode=gen_sql_mode)
         return _sql, _vals, column_names
 
     def save_sql(self, filename):
-        with open(filename + '_sql.txt', 'a') as f:
+        with (PROJECT_ROOT / (filename + '_sql.txt')).open('a', encoding='utf-8') as f:
             f.writelines(self._sqls)
-        with open(filename + '_entry.txt', 'a') as f:
+        with (PROJECT_ROOT / (filename + '_entry.txt')).open('a', encoding='utf-8') as f:
             entrys = [str(entry) for entry in self._entrys]
             print(','.join(entrys))
             f.writelines(','.join(entrys) + ',')
+
+    def _record_sql(self, sql):
+        self.sql_record_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.sql_record_file.open('a', encoding='utf-8') as record:
+            record.write(sql.rstrip(';') + ';\n')
 
     @db_operation_decorator
     def execute_multi_sqls(self, sqls):
@@ -331,12 +333,12 @@ class Mysql:
                 for s in sql.split(';'):
                     if s.strip():
                         self._cursor.execute(s.strip())
-                        sql_records_f.write(s.strip() + ';\n')
+                        self._record_sql(s.strip())
         else:
             for s in sqls.split(';'):
                 if s.strip():
                     self._cursor.execute(s.strip())
-                    sql_records_f.write(s.strip() + ';\n')
+                    self._record_sql(s.strip())
         self._connection.commit()
 
     @db_operation_decorator_no_verbose
@@ -371,12 +373,14 @@ class Mysql:
             for fmt in tablefmts[:-1]:
                 output = tabulate.tabulate(results, headers=headers, tablefmt=fmt)
                 output += '\n'
-                fast_select_f.writelines(output)
+                with DEFAULT_SELECT_LOG_FILE.open('a', encoding='utf-8') as fast_select_f:
+                    fast_select_f.writelines(output)
                 print(output)
         else:
             output = tabulate.tabulate(results, headers=headers, tablefmt=tablefmt)
             output += '\n'
-            fast_select_f.writelines(output)
+            with DEFAULT_SELECT_LOG_FILE.open('a', encoding='utf-8') as fast_select_f:
+                fast_select_f.writelines(output)
             print(output)
 
     def gen_item_from_item_template(self, SoundOverrideSubclass='SoundOverrideSubclass'):
@@ -412,7 +416,7 @@ class Mysql:
         sql = f'select * from {table};'
         self._cursor.execute(sql)
         column_names = [i[0] for i in self._cursor.description]
-        with open(f'{table}.csv', mode='w', newline='', encoding='utf-8') as f:
+        with (PROJECT_ROOT / f'{table}.csv').open(mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
 
             # 写入列名
@@ -433,8 +437,10 @@ class Mysql:
         self.gen_csv_from_table('item')
 
     def gen_sqlfile_from_sqls(self, filename, sqls:list):
-        with open(filename+'.sql', 'w', encoding='utf-8') as f:
+        output_path = PROJECT_ROOT / (filename + '.sql')
+        with output_path.open('w', encoding='utf-8') as f:
             f.writelines(sqls)
+        print(f'generated SQL: {output_path}')
         print(f'use cmd to import {filename}.sql into mysql:')
         print(f'    mysql -u root --password=root acore_world < {filename}.sql')
 

@@ -1,3 +1,5 @@
+from src.customization.item.equipment import update_tbl_item_up
+
 class Helper:
     def __init__(self, instance):
         self._instance = instance
@@ -53,7 +55,7 @@ def gen_jewel_update(instance, rate:int):
                 last_result_it = instance.copy_item(old_entry_it, new_entry_it, options=opt_it, last_result=last_result_it, table='item_template', primary_key='entry', gen_sql_mode=True)
                 item_template_sqls.append(last_result_it[0])
 
-                sql = instance.update_tbl_item_up(old_entry_it, old_entry_item_template, new_entry_it, gen_sql_mode=True)
+                sql = update_tbl_item_up(instance, old_entry_it, old_entry_item_template, new_entry_it, gen_sql_mode=True)
                 item_up_sqls.append(sql)
 
                 old_entry_sp = new_entry_sp
@@ -78,7 +80,14 @@ def gen_jewel_update(instance, rate:int):
     instance.gen_sqlfile_from_sqls('item_up', item_up_sqls)
     instance.gen_sqlfile_from_sqls('all', instance._sqls)
 
-    # instance.execute_multi_sqls(instance._sqls)
+    # 默认只生成 SQL 文件；GUI 的 apply_jewel_update 会继续写入当前数据库。
+
+def apply_jewel_update(instance, rate: int):
+    """Generate jewel upgrade SQL files and apply the generated rows."""
+    instance._sqls.clear()
+    instance._entrys.clear()
+    gen_jewel_update(instance, rate)
+    instance.execute_multi_sqls(instance._sqls)
 
 # 删除 数据库中所有 强化蓝宝石、强化紫宝石的信息： item_template、gemproperties、spellitemenchantment和item_up
 # linux端只用删除item_template和item_up 相关内容，因为不做开发环境不导入的话就没有另外两个表的数据

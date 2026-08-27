@@ -4,3 +4,6 @@
 *.sql
 *.pyc
 __pycache__
+# Local GUI database profiles (may contain passwords)
+.db_tool_gui.json
+!requirements.txt
