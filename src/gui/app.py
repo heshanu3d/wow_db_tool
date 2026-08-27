@@ -11,7 +11,7 @@ from typing import Callable
 from .config import AppSettings, DatabaseProfile, load_settings, save_settings
 from .features import CATEGORIES, FEATURES, Feature
 from .runner import RunResult, run_feature
-from .skill_descriptions import load_skill_descriptions
+from .skill_descriptions import load_skill_details
 from .state import FeatureRun, FeatureStateStore
 
 COLORS = {
@@ -236,24 +236,30 @@ class SkillConfigView(tk.Frame):
         self.configuration = feature.normalize_configuration(saved)
         self.enabled_vars: dict[tuple[str, str], tk.BooleanVar] = {}
         self.value_vars: dict[tuple[str, str], tk.StringVar] = {}
+        self.current_value_vars: dict[tuple[str, str], tk.StringVar] = {}
         self.description_vars: dict[str, tk.StringVar] = {}
         for group_name, skills in self.configuration.items():
             for skill, item in skills.items():
                 key = (group_name, skill)
                 self.enabled_vars[key] = tk.BooleanVar(self, value=item["enabled"])
                 self.value_vars[key] = tk.StringVar(self, value=item["value"])
+                self.current_value_vars[key] = tk.StringVar(
+                    self, value="正在读取…"
+                )
                 if skill not in self.description_vars:
                     self.description_vars[skill] = tk.StringVar(
                         self, value="正在从当前数据库读取…"
                     )
         self.active_group = feature.config_groups[0]
         self.summary_var = tk.StringVar(self)
-        self.description_status_var = tk.StringVar(self, value="技能描述正在从当前数据库读取")
+        self.description_status_var = tk.StringVar(
+            self, value="正在从当前数据库读取技能当前值与描述"
+        )
         self.pack(fill="both", expand=True)
         self._build()
         self._render_group()
         self._update_summary()
-        self._request_descriptions()
+        self._request_details()
 
     def _build(self):
         header = tk.Frame(self, bg=COLORS["paper"])
@@ -350,81 +356,108 @@ class SkillConfigView(tk.Frame):
 
         columns = tk.Frame(section, bg=COLORS["slate_soft"])
         columns.pack(fill="x", padx=1)
-        columns.grid_columnconfigure(3, weight=1)
+        columns.grid_columnconfigure(4, weight=1)
         tk.Label(
-            columns, text="启用", width=7, bg=COLORS["slate_soft"],
+            columns, text="启用", width=6, bg=COLORS["slate_soft"],
             fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
         ).grid(row=0, column=0, pady=7)
         tk.Label(
-            columns, text="技能", width=12, anchor="w", bg=COLORS["slate_soft"],
+            columns, text="技能", width=10, anchor="w", bg=COLORS["slate_soft"],
             fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
         ).grid(row=0, column=1, sticky="w")
         tk.Label(
-            columns, text="修改值", width=20, anchor="w", bg=COLORS["slate_soft"],
+            columns, text="修改值", width=18, anchor="w", bg=COLORS["slate_soft"],
             fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
         ).grid(row=0, column=2, sticky="w")
         tk.Label(
+            columns, text="当前值", width=17, anchor="w", bg=COLORS["slate_soft"],
+            fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
+        ).grid(row=0, column=3, sticky="w")
+        tk.Label(
             columns, text="技能描述", anchor="w", bg=COLORS["slate_soft"],
             fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
-        ).grid(row=0, column=3, sticky="ew", padx=(8, 12))
+        ).grid(row=0, column=4, sticky="ew", padx=(6, 10))
 
         skills = self.configuration[self.active_group.config_name]
         for index, skill in enumerate(skills):
             row_bg = COLORS["surface"] if index % 2 == 0 else "#F8FAFC"
             row = tk.Frame(section, bg=row_bg, highlightbackground=COLORS["line"], highlightthickness=0)
             row.pack(fill="x", padx=1)
-            row.grid_columnconfigure(3, weight=1)
+            row.grid_columnconfigure(4, weight=1)
             key = (self.active_group.config_name, skill)
             tk.Checkbutton(
                 row, variable=self.enabled_vars[key], command=self._update_summary,
-                bg=row_bg, activebackground=row_bg, highlightthickness=0, width=5,
+                bg=row_bg, activebackground=row_bg, highlightthickness=0, width=4,
             ).grid(row=0, column=0, padx=(7, 2), pady=7)
             tk.Label(
-                row, text=skill, width=12, anchor="w", bg=row_bg, fg=COLORS["ink"],
+                row, text=skill, width=10, anchor="w", bg=row_bg, fg=COLORS["ink"],
                 font=("Noto Sans CJK SC", 9),
             ).grid(row=0, column=1, sticky="nw", pady=8)
             value_box = tk.Frame(row, bg=row_bg)
-            value_box.grid(row=0, column=2, sticky="nw", padx=(0, 8), pady=6)
-            ttk.Entry(value_box, textvariable=self.value_vars[key], width=11).pack(side="left")
+            value_box.grid(row=0, column=2, sticky="nw", padx=(0, 6), pady=6)
+            ttk.Entry(value_box, textvariable=self.value_vars[key], width=9).pack(side="left")
             tk.Label(
-                value_box, text=self.active_group.value_label, width=7, anchor="w",
+                value_box, text=self.active_group.value_label, width=6, anchor="w",
                 bg=row_bg, fg=COLORS["muted"], font=("Noto Sans CJK SC", 8),
-            ).pack(side="left", padx=(7, 0))
+            ).pack(side="left", padx=(5, 0))
+            tk.Label(
+                row, textvariable=self.current_value_vars[key], width=17,
+                anchor="w", justify="left", wraplength=125,
+                bg=row_bg, fg=COLORS["ink"], font=("Noto Sans CJK SC", 8),
+            ).grid(row=0, column=3, sticky="nw", pady=7)
             tk.Label(
                 row, textvariable=self.description_vars[skill], anchor="w", justify="left",
-                wraplength=230, bg=row_bg, fg=COLORS["muted"],
+                wraplength=210, bg=row_bg, fg=COLORS["muted"],
                 font=("Noto Sans CJK SC", 8),
-            ).grid(row=0, column=3, sticky="ew", padx=(8, 12), pady=7)
+            ).grid(row=0, column=4, sticky="ew", padx=(6, 10), pady=7)
 
-    def _request_descriptions(self):
-        request = getattr(self.app, "request_skill_descriptions", None)
+    def _request_details(self):
+        request = getattr(self.app, "request_skill_details", None)
         if request is None:
-            self._descriptions_loaded({}, "当前界面不支持数据库描述查询")
+            self._details_loaded({}, {}, "当前界面不支持数据库技能数据查询")
             return
-        request(self.feature, self._descriptions_loaded)
+        request(self.feature, self._details_loaded)
 
-    def _descriptions_loaded(self, descriptions: dict[str, str], error: str = ""):
+    def _details_loaded(
+        self,
+        descriptions: dict[str, str],
+        current_values: dict[tuple[str, str], str],
+        error: str = "",
+    ):
         try:
             if not self.winfo_exists():
                 return
         except tk.TclError:
             return
-        missing = 0
+
+        missing_descriptions = 0
         for skill, variable in self.description_vars.items():
             description = descriptions.get(skill, "")
             if description:
                 variable.set(description)
             else:
-                missing += 1
+                missing_descriptions += 1
                 variable.set("当前数据库中未找到技能描述")
+
+        missing_values = 0
+        for key, variable in self.current_value_vars.items():
+            current_value = current_values.get(key, "")
+            if current_value:
+                variable.set(current_value)
+            else:
+                missing_values += 1
+                variable.set("未找到可修改值")
+
         if error:
-            self.description_status_var.set(f"技能描述读取失败：{error}")
-        elif missing:
-            self.description_status_var.set(
-                f"技能描述来自 {self.app.profile.name} · {missing} 项未找到"
-            )
-        else:
-            self.description_status_var.set(f"技能描述来自 {self.app.profile.name}")
+            self.description_status_var.set(f"技能数据读取失败：{error}")
+            return
+        missing_parts = []
+        if missing_values:
+            missing_parts.append(f"当前值 {missing_values} 项未找到")
+        if missing_descriptions:
+            missing_parts.append(f"描述 {missing_descriptions} 项未找到")
+        suffix = f" · {' · '.join(missing_parts)}" if missing_parts else ""
+        self.description_status_var.set(f"技能数据来自 {self.app.profile.name}{suffix}")
 
     def _set_group_enabled(self, enabled: bool):
         group_name = self.active_group.config_name
@@ -499,8 +532,7 @@ class DbToolApp(tk.Tk):
         self.connection_var = tk.StringVar(value="尚未连接")
         self.selected: dict[str, tk.BooleanVar] = {f.id: tk.BooleanVar(value=False) for f in FEATURES}
         self.work_queue: queue.Queue[tuple[str, object]] = queue.Queue()
-        self.skill_description_cache: dict[tuple[str, str], dict[str, str]] = {}
-        self.skill_description_callbacks: dict[tuple[str, str], list[Callable]] = {}
+        self.skill_detail_callbacks: dict[tuple[str, str], list[Callable]] = {}
         self.running = False
         self.cards_frame: ScrollFrame | None = None
         self._configure_styles()
@@ -838,41 +870,36 @@ class DbToolApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("标记失败", str(exc), parent=self)
 
-    def request_skill_descriptions(self, feature: Feature, callback: Callable) -> None:
+    def request_skill_details(self, feature: Feature, callback: Callable) -> None:
         key = (self.profile.target_label, feature.id)
-        cached = self.skill_description_cache.get(key)
-        if cached is not None:
-            self.after_idle(
-                lambda callback=callback, cached=cached: self._deliver_skill_descriptions(
-                    callback, cached, ""
-                )
-            )
-            return
-
-        callbacks = self.skill_description_callbacks.setdefault(key, [])
+        callbacks = self.skill_detail_callbacks.setdefault(key, [])
         callbacks.append(callback)
         if len(callbacks) > 1:
             return
         threading.Thread(
-            target=self._skill_description_worker,
+            target=self._skill_detail_worker,
             args=(replace(self.profile), feature, key),
             daemon=True,
         ).start()
 
     @staticmethod
-    def _deliver_skill_descriptions(callback: Callable, descriptions, error: str) -> None:
+    def _deliver_skill_details(
+        callback: Callable, descriptions, current_values, error: str
+    ) -> None:
         try:
-            callback(descriptions, error)
+            callback(descriptions, current_values, error)
         except tk.TclError:
             # The user may have left the skill page while the DB query was running.
             pass
 
-    def _skill_description_worker(self, profile: DatabaseProfile, feature: Feature, key):
+    def _skill_detail_worker(self, profile: DatabaseProfile, feature: Feature, key):
         try:
-            descriptions = load_skill_descriptions(profile, feature)
-            self.work_queue.put(("skill_descriptions", (key, descriptions, "")))
+            details = load_skill_details(profile, feature)
+            self.work_queue.put(
+                ("skill_details", (key, details.descriptions, details.current_values, ""))
+            )
         except Exception as exc:
-            self.work_queue.put(("skill_descriptions", (key, {}, str(exc))))
+            self.work_queue.put(("skill_details", (key, {}, {}, str(exc))))
 
     def refresh_state(self):
         if self.running:
@@ -906,13 +933,13 @@ class DbToolApp(tk.Tk):
                     if target_label == self.profile.target_label:
                         self.connection_var.set(f"连接失败 · {self.profile.name}")
                         messagebox.showerror("数据库连接失败", f"{self.profile.target_label}\n\n{error}\n\n可在“连接配置”中修改地址和账号。", parent=self)
-                elif kind == "skill_descriptions":
-                    key, descriptions, error = payload
-                    callbacks = self.skill_description_callbacks.pop(key, [])
-                    if not error:
-                        self.skill_description_cache[key] = descriptions
+                elif kind == "skill_details":
+                    key, descriptions, current_values, error = payload
+                    callbacks = self.skill_detail_callbacks.pop(key, [])
                     for callback in callbacks:
-                        self._deliver_skill_descriptions(callback, descriptions, error)
+                        self._deliver_skill_details(
+                            callback, descriptions, current_values, error
+                        )
                 elif kind == "progress":
                     result: RunResult = payload
                     self.connection_var.set(f"{'完成' if result.ok else '失败'} · {result.feature.title}")

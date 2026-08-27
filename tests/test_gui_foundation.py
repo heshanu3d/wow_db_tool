@@ -17,7 +17,7 @@ from src.gui.app import DbToolApp, ProfilesDialog, SkillConfigView
 from src.gui.config import AppSettings, DatabaseProfile, load_settings, save_settings
 from src.gui.features import FEATURE_BY_ID, FEATURES
 from src.gui.runner import run_feature
-from src.gui.skill_descriptions import load_skill_descriptions, skill_names
+from src.gui.skill_descriptions import load_skill_details, skill_names
 
 
 def descendants(widget):
@@ -232,6 +232,11 @@ class GuiFoundationTests(unittest.TestCase):
             skill: f"{skill}的数据库技能描述"
             for skill in skill_names(feature)
         }
+        current_values = {
+            (group_name, skill): "1.5s"
+            for group_name, skills in feature.default_configuration().items()
+            for skill in skills
+        }
         app = SimpleNamespace(
             main=main,
             settings=AppSettings(profiles=[DatabaseProfile("测试")]),
@@ -239,7 +244,9 @@ class GuiFoundationTests(unittest.TestCase):
             category="",
             show_features=Mock(),
             save_feature_configuration=Mock(),
-            request_skill_descriptions=lambda _feature, callback: callback(descriptions, ""),
+            request_skill_details=lambda _feature, callback: callback(
+                descriptions, current_values, ""
+            ),
         )
         try:
             view = SkillConfigView(app, feature)
@@ -268,13 +275,28 @@ class GuiFoundationTests(unittest.TestCase):
             self.assertTrue(all(entry.winfo_height() > 1 for entry in entries))
 
             labels = [widget for widget in descendants(view) if isinstance(widget, tk.Label)]
+            self.assertTrue(any(label.cget("text") == "当前值" for label in labels))
             self.assertTrue(any(label.cget("text") == "技能描述" for label in labels))
             skill_labels = [label for label in labels if label.cget("text") in descriptions]
             self.assertTrue(skill_labels)
-            self.assertTrue(all(int(label.cget("width")) <= 12 for label in skill_labels))
+            self.assertTrue(all(int(label.cget("width")) <= 10 for label in skill_labels))
 
             first_skill = next(iter(view.configuration[first_group.config_name]))
+            first_key = (first_group.config_name, first_skill)
+            self.assertEqual(view.current_value_vars[first_key].get(), current_values[first_key])
             self.assertEqual(view.description_vars[first_skill].get(), descriptions[first_skill])
+            current_label = next(
+                label
+                for label in labels
+                if label.cget("text") == current_values[first_key]
+                and int(label.cget("width")) == 17
+            )
+            current_right = (
+                current_label.winfo_rootx() - root.winfo_rootx()
+                + current_label.winfo_width()
+            )
+            self.assertTrue(current_label.winfo_ismapped())
+            self.assertLessEqual(current_right, root.winfo_width())
             description_label = next(
                 label
                 for label in labels
@@ -307,30 +329,60 @@ class GuiFoundationTests(unittest.TestCase):
         finally:
             root.destroy()
 
-    def test_skill_descriptions_use_conditions_and_display_name_fallback(self):
+    def test_skill_details_use_conditions_and_display_name_fallback(self):
+        group = SimpleNamespace(config_name="mod_gcd_time_skills", function="mod_gcd_time")
         feature = SimpleNamespace(
             configurable=True,
             module="tests.fake_skill_module",
+            config_groups=(group,),
             default_configuration=lambda: {
-                "group": {
-                    "技能甲": {"enabled": True, "value": "1"},
-                    "技能乙": {"enabled": True, "value": "2"},
-                    "风怒武器_效果": {"enabled": True, "value": "3"},
+                "mod_gcd_time_skills": {
+                    "技能甲": {"enabled": True, "value": "250"},
+                    "技能乙": {"enabled": True, "value": "0"},
                 }
             },
         )
         module = SimpleNamespace(
             cond={
-                "技能甲": "s.id = 1",
-                "技能乙": "s.id = 2",
-                "风怒武器_效果": "s.id = 3",
+                "技能甲": "s.spellname4 = '技能甲' and s.StartRecoveryTime > 0",
+                "技能乙": "s.spellname4 = '技能乙' and s.StartRecoveryTime > 0",
             }
         )
-        cursor = Mock()
-        cursor.fetchall.side_effect = [
-            [(1, "  第一行\n第二行  ", 1, 0, 0)],
-            [("技能乙", "技能乙描述"), ("风怒武器", "风怒武器描述")],
+
+        def spell_row(spell_id, name, description, gcd, **extra):
+            row = {
+                "spell_id": spell_id,
+                "spell_name": name,
+                "skill_description": description,
+                "proc_chance": 0,
+                "proc_charges": 0,
+                "duration_index": 0,
+                "recovery_time": 0,
+                "category_recovery_time": 0,
+                "casting_time_index": 0,
+                "start_recovery_category": 133 if gcd else 0,
+                "start_recovery_time": gcd,
+                "effect_misc_value_1": 0,
+            }
+            for slot in range(1, 4):
+                row[f"effect_{slot}"] = 0
+                row[f"effect_base_points_{slot}"] = 0
+                row[f"effect_amplitude_{slot}"] = 0
+                row[f"effect_apply_aura_{slot}"] = 0
+                row[f"effect_trigger_spell_{slot}"] = 0
+            row.update(extra)
+            return row
+
+        main_row = spell_row(
+            1, "技能甲", "  第一行\n第二行  ", 1500,
+            skill_match_0=1, skill_match_1=0,
+        )
+        fallback_rows = [
+            spell_row(1, "技能甲", "技能甲描述", 1500),
+            spell_row(2, "技能乙", "技能乙描述", 0),
         ]
+        cursor = Mock()
+        cursor.fetchall.side_effect = [[main_row], fallback_rows]
         connection = Mock()
         connection.cursor.return_value = cursor
 
@@ -339,23 +391,96 @@ class GuiFoundationTests(unittest.TestCase):
         ), patch(
             "src.gui.skill_descriptions.mysql.connector.connect", return_value=connection
         ) as connect:
-            result = load_skill_descriptions(DatabaseProfile("测试"), feature)
+            details = load_skill_details(DatabaseProfile("测试"), feature)
 
         self.assertEqual(
-            result,
+            details.descriptions,
+            {"技能甲": "第一行 第二行", "技能乙": "技能乙描述"},
+        )
+        self.assertEqual(
+            details.current_values,
             {
-                "技能甲": "第一行 第二行",
-                "技能乙": "技能乙描述",
-                "风怒武器_效果": "风怒武器描述",
+                ("mod_gcd_time_skills", "技能甲"): "1.5s",
+                ("mod_gcd_time_skills", "技能乙"): "0ms",
             },
         )
         connect.assert_called_once()
+        connection.cursor.assert_called_once_with(dictionary=True)
         self.assertEqual(cursor.execute.call_count, 2)
-        fallback_args = cursor.execute.call_args_list[1].args
-        self.assertIn("SpellName4 IN", fallback_args[0])
-        self.assertEqual(fallback_args[1], ("技能乙", "风怒武器"))
+        self.assertEqual(cursor.execute.call_args_list[1].args[1], ("技能甲", "技能乙"))
         cursor.close.assert_called_once()
         connection.close.assert_called_once()
+
+    def test_skill_details_map_each_modification_type_to_its_database_field(self):
+        groups = (
+            SimpleNamespace(config_name="damage", function="mod_dmg"),
+            SimpleNamespace(config_name="chance", function="mod_trigger_chance"),
+            SimpleNamespace(config_name="duration", function="mod_duration"),
+            SimpleNamespace(config_name="cast", function="mod_cast_time"),
+        )
+        feature = SimpleNamespace(
+            configurable=True,
+            module="tests.fake_skill_module",
+            config_groups=groups,
+            default_configuration=lambda: {
+                group.config_name: {"测试技能": {"enabled": True, "value": "1"}}
+                for group in groups
+            },
+        )
+        module = SimpleNamespace(cond={"测试技能": "s.ID = 10"})
+        row = {
+            "spell_id": 10,
+            "spell_name": "测试技能",
+            "skill_description": "测试描述",
+            "effect_1": 2,
+            "effect_2": 6,
+            "effect_3": 0,
+            "effect_base_points_1": 99,
+            "effect_base_points_2": 4,
+            "effect_base_points_3": 0,
+            "effect_amplitude_1": 0,
+            "effect_amplitude_2": 0,
+            "effect_amplitude_3": 0,
+            "effect_apply_aura_1": 0,
+            "effect_apply_aura_2": 42,
+            "effect_apply_aura_3": 0,
+            "effect_trigger_spell_1": 0,
+            "effect_trigger_spell_2": 123,
+            "effect_trigger_spell_3": 0,
+            "proc_chance": 25,
+            "proc_charges": 3,
+            "duration_index": 30,
+            "recovery_time": 0,
+            "category_recovery_time": 6000,
+            "casting_time_index": 16,
+            "start_recovery_category": 133,
+            "start_recovery_time": 1500,
+            "effect_misc_value_1": 0,
+            "skill_match_0": 1,
+        }
+        cursor = Mock()
+        cursor.fetchall.side_effect = [
+            [row],
+            [],
+            [{"value_id": 30, "current_value": 1800000}],
+            [{"value_id": 16, "current_value": 1500}],
+        ]
+        connection = Mock()
+        connection.cursor.return_value = cursor
+
+        with patch(
+            "src.gui.skill_descriptions.importlib.import_module", return_value=module
+        ), patch(
+            "src.gui.skill_descriptions.mysql.connector.connect", return_value=connection
+        ):
+            details = load_skill_details(DatabaseProfile("测试"), feature)
+
+        self.assertEqual(details.current_values[("damage", "测试技能")], "100")
+        self.assertEqual(details.current_values[("chance", "测试技能")], "25%")
+        self.assertEqual(details.current_values[("duration", "测试技能")], "1800s")
+        self.assertEqual(details.current_values[("cast", "测试技能")], "1.5s")
+        self.assertIn("spellduration", cursor.execute.call_args_list[2].args[0])
+        self.assertIn("spellcasttimes", cursor.execute.call_args_list[3].args[0])
 
     def test_existing_profile_edit_is_committed_to_displayed_profile(self):
         dialog = ProfilesDialog.__new__(ProfilesDialog)
