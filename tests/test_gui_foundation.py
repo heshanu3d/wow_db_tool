@@ -17,6 +17,7 @@ from src.gui.app import DbToolApp, ProfilesDialog, SkillConfigView
 from src.gui.config import AppSettings, DatabaseProfile, load_settings, save_settings
 from src.gui.features import FEATURE_BY_ID, FEATURES
 from src.gui.runner import run_feature
+from src.gui.skill_descriptions import load_skill_descriptions, skill_names
 
 
 def descendants(widget):
@@ -226,15 +227,21 @@ class GuiFoundationTests(unittest.TestCase):
         root.geometry("830x604")  # 1040x680 app minus sidebar/top bar
         main = tk.Frame(root)
         main.pack(fill="both", expand=True)
+        feature = FEATURE_BY_ID["class.shaman.bundle"]
+        descriptions = {
+            skill: f"{skill}的数据库技能描述"
+            for skill in skill_names(feature)
+        }
         app = SimpleNamespace(
             main=main,
             settings=AppSettings(profiles=[DatabaseProfile("测试")]),
+            profile=DatabaseProfile("测试"),
             category="",
             show_features=Mock(),
             save_feature_configuration=Mock(),
+            request_skill_descriptions=lambda _feature, callback: callback(descriptions, ""),
         )
         try:
-            feature = FEATURE_BY_ID["class.shaman.bundle"]
             view = SkillConfigView(app, feature)
             root.update()
 
@@ -260,7 +267,25 @@ class GuiFoundationTests(unittest.TestCase):
             self.assertEqual(len(checks), len(view.configuration[first_group.config_name]))
             self.assertTrue(all(entry.winfo_height() > 1 for entry in entries))
 
+            labels = [widget for widget in descendants(view) if isinstance(widget, tk.Label)]
+            self.assertTrue(any(label.cget("text") == "技能描述" for label in labels))
+            skill_labels = [label for label in labels if label.cget("text") in descriptions]
+            self.assertTrue(skill_labels)
+            self.assertTrue(all(int(label.cget("width")) <= 12 for label in skill_labels))
+
             first_skill = next(iter(view.configuration[first_group.config_name]))
+            self.assertEqual(view.description_vars[first_skill].get(), descriptions[first_skill])
+            description_label = next(
+                label
+                for label in labels
+                if label.cget("text") == descriptions[first_skill]
+            )
+            description_right = (
+                description_label.winfo_rootx() - root.winfo_rootx()
+                + description_label.winfo_width()
+            )
+            self.assertTrue(description_label.winfo_ismapped())
+            self.assertLessEqual(description_right, root.winfo_width())
             first_entry = entries[0]
             self.assertEqual(
                 first_entry.get(),
@@ -281,6 +306,56 @@ class GuiFoundationTests(unittest.TestCase):
             self.assertEqual(len(checks), len(view.configuration[last_group.config_name]))
         finally:
             root.destroy()
+
+    def test_skill_descriptions_use_conditions_and_display_name_fallback(self):
+        feature = SimpleNamespace(
+            configurable=True,
+            module="tests.fake_skill_module",
+            default_configuration=lambda: {
+                "group": {
+                    "技能甲": {"enabled": True, "value": "1"},
+                    "技能乙": {"enabled": True, "value": "2"},
+                    "风怒武器_效果": {"enabled": True, "value": "3"},
+                }
+            },
+        )
+        module = SimpleNamespace(
+            cond={
+                "技能甲": "s.id = 1",
+                "技能乙": "s.id = 2",
+                "风怒武器_效果": "s.id = 3",
+            }
+        )
+        cursor = Mock()
+        cursor.fetchall.side_effect = [
+            [(1, "  第一行\n第二行  ", 1, 0, 0)],
+            [("技能乙", "技能乙描述"), ("风怒武器", "风怒武器描述")],
+        ]
+        connection = Mock()
+        connection.cursor.return_value = cursor
+
+        with patch(
+            "src.gui.skill_descriptions.importlib.import_module", return_value=module
+        ), patch(
+            "src.gui.skill_descriptions.mysql.connector.connect", return_value=connection
+        ) as connect:
+            result = load_skill_descriptions(DatabaseProfile("测试"), feature)
+
+        self.assertEqual(
+            result,
+            {
+                "技能甲": "第一行 第二行",
+                "技能乙": "技能乙描述",
+                "风怒武器_效果": "风怒武器描述",
+            },
+        )
+        connect.assert_called_once()
+        self.assertEqual(cursor.execute.call_count, 2)
+        fallback_args = cursor.execute.call_args_list[1].args
+        self.assertIn("SpellName4 IN", fallback_args[0])
+        self.assertEqual(fallback_args[1], ("技能乙", "风怒武器"))
+        cursor.close.assert_called_once()
+        connection.close.assert_called_once()
 
     def test_existing_profile_edit_is_committed_to_displayed_profile(self):
         dialog = ProfilesDialog.__new__(ProfilesDialog)
