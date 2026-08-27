@@ -18,6 +18,7 @@ from src.gui.config import AppSettings, DatabaseProfile, load_settings, save_set
 from src.gui.features import FEATURE_BY_ID, FEATURES
 from src.gui.runner import run_feature
 from src.gui.skill_descriptions import load_skill_details, skill_names
+from src.gui.state import FeatureStateStore
 
 
 def descendants(widget):
@@ -328,6 +329,98 @@ class GuiFoundationTests(unittest.TestCase):
             self.assertEqual(len(checks), len(view.configuration[last_group.config_name]))
         finally:
             root.destroy()
+
+    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
+    def test_skill_groups_keep_independent_scroll_positions(self):
+        root = tk.Tk()
+        root.geometry("830x604")
+        main = tk.Frame(root)
+        main.pack(fill="both", expand=True)
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        app = SimpleNamespace(
+            main=main,
+            settings=AppSettings(profiles=[DatabaseProfile("测试")]),
+            profile=DatabaseProfile("测试"),
+            request_skill_details=lambda _feature, callback: callback({}, {}, ""),
+        )
+        try:
+            view = SkillConfigView(app, feature)
+            root.update()
+
+            view.detail.canvas.yview_moveto(1.0)
+            root.update()
+            gcd_position = view.detail.canvas.yview()[0]
+            self.assertGreater(gcd_position, 0.0)
+
+            view.group_list.selection_clear(0, "end")
+            view.group_list.selection_set(1)
+            view._group_selected()
+            root.update()
+            self.assertAlmostEqual(view.detail.canvas.yview()[0], 0.0, places=3)
+
+            view.group_list.selection_clear(0, "end")
+            view.group_list.selection_set(0)
+            view._group_selected()
+            root.update()
+            self.assertAlmostEqual(
+                view.detail.canvas.yview()[0], gcd_position, delta=0.02
+            )
+        finally:
+            root.destroy()
+
+    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
+    def test_class_skill_editor_is_restored_after_visiting_history(self):
+        settings = AppSettings(
+            profiles=[DatabaseProfile("测试")],
+            window_geometry="1040x680",
+        )
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        with patch("src.gui.app.load_settings", return_value=settings), patch(
+            "src.gui.app.save_settings"
+        ), patch.object(DbToolApp, "refresh_state", lambda self: None), patch.object(
+            DbToolApp,
+            "request_skill_details",
+            lambda self, _feature, callback: callback({}, {}, ""),
+        ), patch.object(FeatureStateStore, "history", return_value=[]):
+            app = DbToolApp()
+            try:
+                app.show_skill_configuration(feature)
+                app.update()
+                original_view = app.current_skill_view
+                self.assertIsNotNone(original_view)
+
+                group = feature.config_groups[1]
+                skill = next(iter(original_view.configuration[group.config_name]))
+                original_view.value_vars[(group.config_name, skill)].set("123s")
+                original_view.group_list.selection_clear(0, "end")
+                original_view.group_list.selection_set(1)
+                original_view._group_selected()
+                app.update()
+
+                app.show_history()
+                app.update()
+                self.assertIsNone(app.current_skill_view)
+
+                app._set_category("职业技能")
+                app.update()
+                restored_view = app.current_skill_view
+                self.assertIsNotNone(restored_view)
+                self.assertEqual(restored_view.feature.id, feature.id)
+                self.assertEqual(restored_view.active_group.config_name, group.config_name)
+                self.assertEqual(
+                    restored_view.value_vars[(group.config_name, skill)].get(),
+                    "123s",
+                )
+
+                restored_view._back()
+                app.update()
+                self.assertIsNone(app.active_skill_feature_id)
+                self.assertIsNone(app.current_skill_view)
+                self.assertTrue(app.cards_frame.winfo_exists())
+            finally:
+                for callback_id in app.tk.call("after", "info"):
+                    app.after_cancel(callback_id)
+                app.destroy()
 
     def test_skill_details_use_conditions_and_display_name_fallback(self):
         group = SimpleNamespace(config_name="mod_gcd_time_skills", function="mod_gcd_time")

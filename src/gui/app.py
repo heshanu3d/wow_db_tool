@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 from typing import Callable
 
 from .config import AppSettings, DatabaseProfile, load_settings, save_settings
-from .features import CATEGORIES, FEATURES, Feature
+from .features import CATEGORIES, FEATURE_BY_ID, FEATURES, Feature
 from .runner import RunResult, run_feature
 from .skill_descriptions import load_skill_details
 from .state import FeatureRun, FeatureStateStore
@@ -228,12 +228,24 @@ class ProfilesDialog(tk.Toplevel):
 class SkillConfigView(tk.Frame):
     """Detailed per-skill editor for one class bundle."""
 
-    def __init__(self, app: "DbToolApp", feature: Feature):
+    def __init__(
+        self,
+        app: "DbToolApp",
+        feature: Feature,
+        navigation_state: dict | None = None,
+    ):
         super().__init__(app.main, bg=COLORS["paper"])
         self.app = app
         self.feature = feature
-        saved = app.settings.feature_configs.get(feature.id, {})
+        navigation_state = navigation_state or {}
+        saved = navigation_state.get(
+            "configuration", app.settings.feature_configs.get(feature.id, {})
+        )
         self.configuration = feature.normalize_configuration(saved)
+        self.group_scroll_positions = dict(
+            navigation_state.get("group_scroll_positions", {})
+        )
+        self.preserve_navigation_state = True
         self.enabled_vars: dict[tuple[str, str], tk.BooleanVar] = {}
         self.value_vars: dict[tuple[str, str], tk.StringVar] = {}
         self.current_value_vars: dict[tuple[str, str], tk.StringVar] = {}
@@ -250,7 +262,15 @@ class SkillConfigView(tk.Frame):
                     self.description_vars[skill] = tk.StringVar(
                         self, value="正在从当前数据库读取…"
                     )
-        self.active_group = feature.config_groups[0]
+        active_group_name = navigation_state.get("active_group")
+        self.active_group = next(
+            (
+                group
+                for group in feature.config_groups
+                if group.config_name == active_group_name
+            ),
+            feature.config_groups[0],
+        )
         self.summary_var = tk.StringVar(self)
         self.description_status_var = tk.StringVar(
             self, value="正在从当前数据库读取技能当前值与描述"
@@ -316,7 +336,9 @@ class SkillConfigView(tk.Frame):
         for group in self.feature.config_groups:
             count = len(self.configuration[group.config_name])
             self.group_list.insert("end", f"  {group.title}  ·  {count}")
-        self.group_list.selection_set(0)
+        active_index = self.feature.config_groups.index(self.active_group)
+        self.group_list.selection_set(active_index)
+        self.group_list.see(active_index)
         self.group_list.bind("<<ListboxSelect>>", self._group_selected)
 
         self.detail = ScrollFrame(body, bg=COLORS["paper"])
@@ -326,8 +348,50 @@ class SkillConfigView(tk.Frame):
         selected = self.group_list.curselection()
         if not selected:
             return
-        self.active_group = self.feature.config_groups[selected[0]]
+        selected_group = self.feature.config_groups[selected[0]]
+        if selected_group.config_name == self.active_group.config_name:
+            return
+        self._remember_active_group_scroll()
+        self.active_group = selected_group
         self._render_group()
+
+    def _remember_active_group_scroll(self):
+        if not hasattr(self, "detail"):
+            return
+        try:
+            position = self.detail.canvas.yview()[0]
+        except tk.TclError:
+            return
+        self.group_scroll_positions[self.active_group.config_name] = position
+
+    def _restore_group_scroll(self, group_name: str):
+        try:
+            if (
+                not self.winfo_exists()
+                or self.active_group.config_name != group_name
+            ):
+                return
+            # The replacement rows have just been created. Recalculate the
+            # canvas region before restoring its saved fraction; otherwise Tk
+            # may still clamp against the previous (often much shorter) group.
+            self.detail.inner.update_idletasks()
+            self.detail.canvas.configure(
+                scrollregion=self.detail.canvas.bbox("all")
+            )
+            self.detail.canvas.yview_moveto(
+                self.group_scroll_positions.get(group_name, 0.0)
+            )
+        except tk.TclError:
+            pass
+
+    def navigation_state(self) -> dict:
+        """Capture the unsaved editor state before another main page is shown."""
+        self._remember_active_group_scroll()
+        return {
+            "configuration": self._collect(),
+            "active_group": self.active_group.config_name,
+            "group_scroll_positions": dict(self.group_scroll_positions),
+        }
 
     def _render_group(self):
         parent = self.detail.inner
@@ -410,6 +474,8 @@ class SkillConfigView(tk.Frame):
                 wraplength=210, bg=row_bg, fg=COLORS["muted"],
                 font=("Noto Sans CJK SC", 8),
             ).grid(row=0, column=4, sticky="ew", padx=(6, 10), pady=7)
+        group_name = self.active_group.config_name
+        self.after_idle(lambda: self._restore_group_scroll(group_name))
 
     def _request_details(self):
         request = getattr(self.app, "request_skill_details", None)
@@ -511,8 +577,8 @@ class SkillConfigView(tk.Frame):
         self._back()
 
     def _back(self):
-        self.app.category = "职业技能"
-        self.app.show_features()
+        self.preserve_navigation_state = False
+        self.app.show_skill_category_home(self.feature)
 
 
 class DbToolApp(tk.Tk):
@@ -533,6 +599,9 @@ class DbToolApp(tk.Tk):
         self.selected: dict[str, tk.BooleanVar] = {f.id: tk.BooleanVar(value=False) for f in FEATURES}
         self.work_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.skill_detail_callbacks: dict[tuple[str, str], list[Callable]] = {}
+        self.skill_navigation_states: dict[str, dict] = {}
+        self.active_skill_feature_id: str | None = None
+        self.current_skill_view: SkillConfigView | None = None
         self.running = False
         self.cards_frame: ScrollFrame | None = None
         self._configure_styles()
@@ -629,11 +698,32 @@ class DbToolApp(tk.Tk):
         self.nav_buttons.append(button)
 
     def _clear_main(self):
+        view = self.current_skill_view
+        if view is not None:
+            try:
+                if view.winfo_exists() and view.preserve_navigation_state:
+                    self.skill_navigation_states[view.feature.id] = (
+                        view.navigation_state()
+                    )
+            except tk.TclError:
+                pass
+            self.current_skill_view = None
         for child in self.main.winfo_children():
             child.destroy()
 
     def _set_category(self, category: str):
         self.category = category
+        if category == "职业技能" and self.active_skill_feature_id:
+            feature = FEATURE_BY_ID.get(self.active_skill_feature_id)
+            if feature is not None and feature.configurable:
+                if (
+                    self.current_skill_view is not None
+                    and self.current_skill_view.feature.id == feature.id
+                ):
+                    return
+                self.show_skill_configuration(feature)
+                return
+            self.active_skill_feature_id = None
         self.show_features()
 
     def show_features(self):
@@ -769,8 +859,25 @@ class DbToolApp(tk.Tk):
     def show_skill_configuration(self, feature: Feature):
         if not feature.configurable:
             return
+        self.category = feature.category
+        self.active_skill_feature_id = feature.id
         self._clear_main()
-        SkillConfigView(self, feature)
+        self.current_skill_view = SkillConfigView(
+            self,
+            feature,
+            self.skill_navigation_states.get(feature.id),
+        )
+
+    def show_skill_category_home(self, feature: Feature | None = None):
+        """Leave the class editor explicitly instead of restoring it on navigation."""
+        feature_id = (
+            feature.id if feature is not None else self.active_skill_feature_id
+        )
+        if feature_id:
+            self.skill_navigation_states.pop(feature_id, None)
+        self.active_skill_feature_id = None
+        self.category = "职业技能"
+        self.show_features()
 
     def apply_selected(self):
         features = [f for f in FEATURES if self.selected[f.id].get()]
