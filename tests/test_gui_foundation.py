@@ -642,6 +642,81 @@ class GuiFoundationTests(unittest.TestCase):
             root.destroy()
 
     @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
+    def test_double_click_custom_skill_opens_populated_editor(self):
+        root = tk.Tk()
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        skill = "双击测试技能"
+        condition = "s.ID=12345"
+        configuration = feature.default_configuration()
+        configuration[group.config_name][skill] = {
+            "enabled": True,
+            "value": "321",
+        }
+        callback_errors = []
+        root.report_callback_exception = (
+            lambda error_type, error, traceback: callback_errors.append(error)
+        )
+        app = SimpleNamespace(
+            settings=AppSettings(profiles=[DatabaseProfile("测试")]),
+            profile=DatabaseProfile("测试"),
+            save_dialog_geometry=Mock(),
+        )
+        view = tk.Frame(root)
+        view.app = app
+        view.feature = feature
+        view.active_group = group
+        view.configuration = configuration
+        view.custom_conditions = {skill: condition}
+        view.custom_skill_rows = Mock(
+            return_value=[
+                (group.config_name, group.title, skill, True, "321", condition)
+            ]
+        )
+        view.upsert_custom_skill = Mock()
+        view.remove_custom_skill = Mock()
+        view.pack()
+        manager = None
+        editor = None
+        try:
+            manager = CustomSkillsDialog(view)
+            manager.update()
+            skill_label = next(
+                widget
+                for widget in descendants(manager)
+                if isinstance(widget, tk.Label) and widget.cget("text") == skill
+            )
+            for event_time in (1000, 1100):
+                skill_label.event_generate(
+                    "<ButtonPress-1>", x=2, y=2, time=event_time
+                )
+                skill_label.event_generate(
+                    "<ButtonRelease-1>", x=2, y=2, time=event_time + 10
+                )
+                root.update()
+
+            editors = [
+                widget
+                for widget in manager.winfo_children()
+                if isinstance(widget, CustomSkillEditorDialog)
+            ]
+            self.assertEqual(callback_errors, [])
+            self.assertEqual(len(editors), 1)
+            editor = editors[0]
+            self.assertTrue(editor.winfo_viewable())
+            self.assertEqual(editor.skill_var.get(), skill)
+            self.assertEqual(editor.value_var.get(), "321")
+            self.assertEqual(
+                editor.condition_text.get("1.0", "end").strip(), condition
+            )
+        finally:
+            if editor is not None and editor.winfo_exists():
+                editor.destroy()
+            if manager is not None and manager.winfo_exists():
+                manager.destroy()
+            root.destroy()
+
+    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
     def test_scroll_frame_accepts_linux_mouse_wheel_buttons_over_content(self):
         root = tk.Tk()
         root.geometry("360x240+20+20")

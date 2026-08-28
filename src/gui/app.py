@@ -488,7 +488,6 @@ class CustomSkillEditorDialog(tk.Toplevel):
         self.configure(bg=COLORS["paper"])
         self.transient(manager)
         self.protocol("WM_DELETE_WINDOW", self._close)
-        self.grab_set()
 
         current = {}
         if original_group and original_skill:
@@ -513,6 +512,12 @@ class CustomSkillEditorDialog(tk.Toplevel):
             self.condition_text.insert(
                 "1.0", self.view.custom_conditions.get(original_skill, "")
             )
+        # A double-click binding runs during ButtonPress handling. Tk cannot
+        # grab a newly created Toplevel until the window manager has mapped it,
+        # which previously raised "grab failed: window not viewable" before
+        # the form was built. Wait for visibility before making it modal.
+        self.wait_visibility()
+        self.grab_set()
         self.skill_entry.focus_set()
 
     def _group_title(self, group_name: str) -> str:
