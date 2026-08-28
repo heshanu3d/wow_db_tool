@@ -49,13 +49,14 @@ sudo apt install python3-tk
 
 ```text
 spell.ID -> spell.SpellIconID / ActiveIconID -> SpellIcon.dbc
--> Interface/Icons/*.blp -> Pillow 解码 -> PNG 缓存 -> Tkinter UI
+-> Interface/Icons/*.blp 或 Interface/Spellbook/*.blp
+-> Pillow 解码 -> PNG 缓存 -> Tkinter UI
 ```
 
 首次使用时点击任一技能页面右上角的“图标资源”，配置同一套 WoW 3.3.5a 客户端资源：
 
 - `SpellIcon.dbc` 文件；
-- 已解压的客户端根目录（其下应有 `Interface/Icons/*.blp`），也可直接选择 `Icons` 目录。
+- 已解压的客户端根目录（其下应有 `Interface/Icons/*.blp` 或 `Interface/Spellbook/*.blp`），也可直接选择 `Icons`/`Spellbook` 目录。
 
 也可以使用以下环境变量：
 
@@ -67,6 +68,11 @@ export WOW_EXTRACTED_CLIENT_ROOT=/path/to/extracted-wow-client
 未显式配置时，程序还会检查项目内的约定目录：
 
 ```text
+assets/wow_335/DBC_335_wotlk/SpellIcon.dbc
+assets/Interface/Icons/*.blp
+assets/Interface/Spellbook/*.blp
+
+# 仍兼容旧约定
 resources/wow_client/DBFilesClient/SpellIcon.dbc
 resources/wow_client/Interface/Icons/*.blp
 ```

@@ -9,3 +9,6 @@ __pycache__
 .db_tool_cache/
 resources/wow_client/
 !requirements.txt
+# Locally extracted WoW client resources (large binary assets)
+assets/Interface/
+assets/Interface.zip

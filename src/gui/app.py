@@ -30,6 +30,7 @@ from .spell_icons import (
     SpellIconCache,
     SpellIconSyncResult,
     load_spell_icon_dbc,
+    spell_icon_resource_directories,
     suggested_spell_icon_paths,
 )
 from .state import FeatureRun, FeatureStateStore
@@ -382,7 +383,9 @@ class IconResourcesDialog(tk.Toplevel):
         ).pack(anchor="w")
         tk.Label(
             content,
-            text="需要从 WoW 3.3.5a 客户端解压 SpellIcon.dbc 和 Interface/Icons/*.blp。图标会转换成 PNG 并缓存在项目目录中。",
+            text=("需要从 WoW 3.3.5a 客户端解压 SpellIcon.dbc，以及 "
+                  "Interface/Icons/*.blp 或 Interface/Spellbook/*.blp。"
+                  "图标会转换成 PNG 并缓存在项目目录中。"),
             bg=COLORS["paper"], fg=COLORS["muted"], justify="left",
             wraplength=700, font=("Noto Sans CJK SC", 9),
         ).pack(anchor="w", pady=(4, 16))
@@ -410,7 +413,8 @@ class IconResourcesDialog(tk.Toplevel):
             )
         tk.Label(
             form,
-            text="根目录下应存在 Interface/Icons；也可直接选择包含 *.blp 的 Icons 目录。清空两个路径可停用图标同步，但已缓存图标仍可显示。",
+            text=("根目录下应存在 Interface/Icons 或 Interface/Spellbook；也可直接选择 "
+                  "Icons/Spellbook 目录。清空两个路径可停用图标同步，但已缓存图标仍可显示。"),
             bg=COLORS["surface"], fg=COLORS["muted"], justify="left",
             wraplength=650, font=("Noto Sans CJK SC", 8),
         ).grid(row=2, column=0, columnspan=3, sticky="w", padx=18, pady=(0, 14))
@@ -448,6 +452,11 @@ class IconResourcesDialog(tk.Toplevel):
                     raise ValueError(f"SpellIcon.dbc 不存在：{dbc_path}")
                 if not root_path.is_dir():
                     raise ValueError(f"客户端解压根目录不存在：{root_path}")
+                if not spell_icon_resource_directories(root_path):
+                    raise ValueError(
+                        "客户端解压根目录下未找到 Interface/Icons、"
+                        "Interface/Spellbook 或可直接使用的 BLP 目录"
+                    )
                 load_spell_icon_dbc(dbc_path)
             self.app.save_spell_icon_settings(dbc, root)
         except (OSError, ValueError, TypeError) as exc:

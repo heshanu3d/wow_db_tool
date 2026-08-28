@@ -94,6 +94,40 @@ def _file_signature(path: Path) -> str:
     return f"{stat.st_size}:{stat.st_mtime_ns}"
 
 
+def spell_icon_resource_directories(
+    extracted_client_root: str | Path,
+) -> tuple[Path, ...]:
+    """Return supported BLP directories in deterministic lookup order."""
+    root = Path(extracted_client_root).expanduser()
+    candidates = (
+        root / "Interface" / "Icons",
+        root / "Interface" / "Spellbook",
+        root / "interface" / "icons",
+        root / "interface" / "spellbook",
+        root / "Icons",
+        root / "Spellbook",
+        root,
+    )
+    directories: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        identity = str(candidate.absolute())
+        if identity in seen or not candidate.is_dir():
+            continue
+        if candidate == root and candidate.name.lower() not in {"icons", "spellbook"}:
+            try:
+                if not any(
+                    path.is_file() and path.suffix.lower() == ".blp"
+                    for path in candidate.iterdir()
+                ):
+                    continue
+            except OSError:
+                continue
+        seen.add(identity)
+        directories.append(candidate)
+    return tuple(directories)
+
+
 def _condition_map(feature: Feature, configuration: Any) -> dict[str, str]:
     normalized = feature.normalize_configuration(configuration)
     module = importlib.import_module(feature.module)
@@ -217,22 +251,10 @@ class SpellIconCache:
             self._dbc_signature = signature
         return self._icon_map
 
-    def _icons_directory(self) -> Path | None:
+    def _resource_directories(self) -> tuple[Path, ...]:
         if not self.client_root:
-            return None
-        candidates = (
-            self.client_root / "Interface" / "Icons",
-            self.client_root / "interface" / "icons",
-            self.client_root / "Icons",
-            self.client_root,
-        )
-        for candidate in candidates:
-            if candidate.is_dir() and (
-                candidate.name.lower() == "icons"
-                or any(candidate.glob("*.blp"))
-            ):
-                return candidate
-        return None
+            return ()
+        return spell_icon_resource_directories(self.client_root)
 
     def _resolve_source(self, icon_id: int, icon_map: dict[int, str]) -> tuple[str, Path | None]:
         icon_name = icon_map.get(int(icon_id), "")
@@ -241,15 +263,17 @@ class SpellIconCache:
         direct = get_spell_icon_path(icon_id, icon_map, self.client_root)
         if direct and direct.is_file():
             return icon_name, direct
-        icon_dir = self._icons_directory()
-        if icon_dir is None:
+        resource_directories = self._resource_directories()
+        if not resource_directories:
             return icon_name, None
         if self._blp_index is None:
-            self._blp_index = {
-                path.name.lower(): path
-                for path in icon_dir.iterdir()
-                if path.is_file() and path.suffix.lower() == ".blp"
-            }
+            self._blp_index = {}
+            for directory in resource_directories:
+                for path in directory.iterdir():
+                    if path.is_file() and path.suffix.lower() == ".blp":
+                        # Icons takes precedence over Spellbook if a client dump
+                        # happens to contain the same basename in both folders.
+                        self._blp_index.setdefault(path.name.lower(), path)
         filename = Path(icon_name.replace("\\", "/")).name + ".blp"
         return icon_name, self._blp_index.get(filename.lower())
 
@@ -287,7 +311,10 @@ class SpellIconCache:
             if not self.configured:
                 return SpellIconSyncResult(
                     cached,
-                    error="未配置 SpellIcon.dbc 或已解压的 Interface/Icons 目录",
+                    error=(
+                        "未配置 SpellIcon.dbc 或已解压的 "
+                        "Interface/Icons、Interface/Spellbook 目录"
+                    ),
                 )
             try:
                 icon_map = self._load_icon_map()
@@ -392,14 +419,23 @@ class SpellIconCache:
 
 
 def suggested_spell_icon_paths() -> tuple[str, str]:
-    """Return optional defaults from environment or the documented project layout."""
+    """Return optional defaults from environment or supported project layouts."""
     dbc = os.environ.get("WOW_SPELL_ICON_DBC", "").strip()
     root = os.environ.get("WOW_EXTRACTED_CLIENT_ROOT", "").strip()
-    standard_root = PROJECT_ROOT / "resources" / "wow_client"
+
+    bundled_root = PROJECT_ROOT / "assets"
+    legacy_root = PROJECT_ROOT / "resources" / "wow_client"
     if not dbc:
-        candidate = standard_root / "DBFilesClient" / "SpellIcon.dbc"
-        if candidate.is_file():
-            dbc = str(candidate)
-    if not root and (standard_root / "Interface" / "Icons").is_dir():
-        root = str(standard_root)
+        for candidate in (
+            bundled_root / "wow_335" / "DBC_335_wotlk" / "SpellIcon.dbc",
+            legacy_root / "DBFilesClient" / "SpellIcon.dbc",
+        ):
+            if candidate.is_file():
+                dbc = str(candidate)
+                break
+    if not root:
+        for candidate in (bundled_root, legacy_root):
+            if spell_icon_resource_directories(candidate):
+                root = str(candidate)
+                break
     return dbc, root

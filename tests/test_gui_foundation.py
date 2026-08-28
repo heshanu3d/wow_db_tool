@@ -45,6 +45,8 @@ from src.gui.spell_icons import (
     SpellIconSyncResult,
     get_spell_icon_path,
     load_spell_icon_dbc,
+    spell_icon_resource_directories,
+    suggested_spell_icon_paths,
 )
 from src.gui.state import FeatureStateStore
 
@@ -370,6 +372,78 @@ class GuiFoundationTests(unittest.TestCase):
         self.assertEqual(updated.spell_icon_dbc_path, "/tmp/SpellIcon.dbc")
         self.assertEqual(updated.spell_icon_client_root, "/tmp/wow-client")
         dialog.destroy.assert_called_once()
+
+    def test_suggested_spell_icon_paths_prefers_bundled_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            dbc_file = (
+                project_root
+                / "assets"
+                / "wow_335"
+                / "DBC_335_wotlk"
+                / "SpellIcon.dbc"
+            )
+            spellbook = project_root / "assets" / "Interface" / "Spellbook"
+            dbc_file.parent.mkdir(parents=True)
+            spellbook.mkdir(parents=True)
+            dbc_file.write_bytes(b"test")
+
+            with (
+                patch("src.gui.spell_icons.PROJECT_ROOT", project_root),
+                patch.dict(
+                    os.environ,
+                    {
+                        "WOW_SPELL_ICON_DBC": "",
+                        "WOW_EXTRACTED_CLIENT_ROOT": "",
+                    },
+                ),
+            ):
+                dbc, root = suggested_spell_icon_paths()
+
+            self.assertEqual(dbc, str(dbc_file))
+            self.assertEqual(root, str(project_root / "assets"))
+            self.assertEqual(
+                spell_icon_resource_directories(project_root / "assets"),
+                (spellbook,),
+            )
+
+    def test_spell_icon_cache_finds_case_mismatched_blp_in_spellbook(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        configuration = feature.default_configuration()
+        profile = DatabaseProfile("测试")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dbc_file = root / "SpellIcon.dbc"
+            icon_file = root / "Interface" / "Spellbook" / "spell_test.BLP"
+            cache_root = root / "cache"
+            icon_file.parent.mkdir(parents=True)
+            strings = b"\0Interface\\Spellbook\\Spell_Test\0"
+            dbc_file.write_bytes(
+                struct.pack("<4s4I", b"WDBC", 1, 2, 8, len(strings))
+                + struct.pack("<II", 136, 1)
+                + strings
+            )
+            icon_file.write_bytes(b"spellbook-icon-source")
+
+            cache = SpellIconCache(dbc_file, root, cache_root)
+            reference = {
+                "传染": SkillIconReference(
+                    spell_id=50842, spell_icon_id=136, active_icon_id=0
+                )
+            }
+
+            def convert(source, target):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
+
+            with patch.object(cache, "_convert_blp", side_effect=convert):
+                result = cache.sync(profile, feature, configuration, reference)
+
+            self.assertEqual(result.error, "")
+            self.assertEqual(result.changed_skills, frozenset({"传染"}))
+            self.assertEqual(
+                result.paths["传染"].read_bytes(), b"spellbook-icon-source"
+            )
 
     def test_spell_icon_dbc_lookup_and_persistent_difference_cache(self):
         feature = FEATURE_BY_ID["class.dk.bundle"]
