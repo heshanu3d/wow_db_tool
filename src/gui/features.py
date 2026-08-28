@@ -53,6 +53,90 @@ class SkillConfigGroup:
 
 
 @dataclass(frozen=True)
+class SkillConditionTemplate:
+    title: str
+    condition: str
+    description: str
+
+    def render(self, skill_name: str = "") -> str:
+        escaped_name = (skill_name.strip() or "技能名称").replace("'", "''")
+        return self.condition.replace("{skill}", escaped_name)
+
+
+SKILL_CONDITION_TEMPLATES = (
+    SkillConditionTemplate(
+        "技能名称 + 全部等级",
+        "s.SpellName4='{skill}' and s.SpellRank4 like '等级%'",
+        "现有 cond 中最常见的写法，匹配同名技能的全部等级。",
+    ),
+    SkillConditionTemplate(
+        "精确技能名称",
+        "s.SpellName4='{skill}'",
+        "只按中文技能名称匹配，适合名称在 spell 表中唯一的技能。",
+    ),
+    SkillConditionTemplate(
+        "技能名称 + 单个 ID",
+        "s.SpellName4='{skill}' and s.ID=0",
+        "名称和 ID 双重限定；请把 0 改为实际技能 ID。",
+    ),
+    SkillConditionTemplate(
+        "单个技能 ID",
+        "s.ID=0",
+        "只匹配一个明确的 spell ID；请把 0 改为实际技能 ID。",
+    ),
+    SkillConditionTemplate(
+        "多个技能 ID",
+        "s.ID in (0, 0, 0)",
+        "匹配一组明确的技能 ID，可用于多个等级或多个关联效果。",
+    ),
+    SkillConditionTemplate(
+        "名称 + 等级 + ID 上限",
+        "s.SpellName4='{skill}' and s.SpellRank4 like '等级%' and s.ID < 50000",
+        "排除较新的重复记录；50000 是现有 cond 常用的示例上限。",
+    ),
+    SkillConditionTemplate(
+        "名称 + 等级 + 排除 ID",
+        "s.SpellName4='{skill}' and s.SpellRank4 like '等级%' and s.ID != 0",
+        "保留全部等级但排除错误或 NPC 专用记录；请修改需要排除的 ID。",
+    ),
+    SkillConditionTemplate(
+        "名称 + 职业法术家族",
+        "s.SpellName4='{skill}' and s.SpellFamilyName=0",
+        "通过 SpellFamilyName 排除其他职业或同名记录；请修改家族 ID。",
+    ),
+    SkillConditionTemplate(
+        "名称 + 等级 + 职业家族",
+        "s.SpellName4='{skill}' and s.SpellRank4 like '等级%' and s.SpellFamilyName=0",
+        "同时按等级和职业法术家族限定，是现有 cond 的常见组合。",
+    ),
+    SkillConditionTemplate(
+        "名称 + 可用公共冷却",
+        "s.SpellName4='{skill}' and s.StartRecoveryTime > 0",
+        "筛选具有公共冷却时间的同名记录，常用于 GCD 或施法相关修改。",
+    ),
+    SkillConditionTemplate(
+        "名称 + 描述前缀",
+        "s.SpellName4='{skill}' and s.SpellDescription4 like '描述关键词%'",
+        "用技能描述进一步消除同名歧义；请替换描述关键词。",
+    ),
+    SkillConditionTemplate(
+        "名称 + 效果字段",
+        "s.SpellName4='{skill}' and s.Effect1=0",
+        "按 Effect1 等效果字段筛选；可继续改为 Effect2、Aura 或触发字段。",
+    ),
+    SkillConditionTemplate(
+        "技能名称模糊匹配",
+        "s.SpellName4 like '%{skill}%'",
+        "按名称关键词模糊搜索，建议测试结果后继续增加 ID、等级等限制。",
+    ),
+)
+
+SKILL_CONDITION_TEMPLATE_BY_TITLE = {
+    template.title: template for template in SKILL_CONDITION_TEMPLATES
+}
+
+
+@dataclass(frozen=True)
 class Feature:
     id: str
     title: str
@@ -97,7 +181,7 @@ class Feature:
         return {
             group.config_name: {
                 skill: {"enabled": True, "value": str(value)}
-                for skill, value in getattr(module, group.config_name).items()
+                for skill, value in getattr(module, group.config_name, {}).items()
             }
             for group in self.config_groups
         }
@@ -237,7 +321,7 @@ class Feature:
         custom_conditions = self.custom_skill_conditions(normalized, validate=True)
         result: dict[str, dict[str, Any]] = {}
         for group in self.config_groups:
-            defaults = getattr(module, group.config_name)
+            defaults = getattr(module, group.config_name, {})
             values: dict[str, Any] = {}
             for skill, item in normalized[group.config_name].items():
                 if not item["enabled"]:
@@ -301,36 +385,18 @@ class Feature:
         return function(instance, *self.args, **self.kwargs)
 
 
-DK_CONFIG_GROUPS = (
+CLASS_SKILL_CONFIG_GROUPS = (
     SkillConfigGroup("mod_gcd_time_skills", "公共冷却时间（GCD）", "mod_gcd_time", "毫秒", "0 表示无 GCD。"),
-    SkillConfigGroup("mod_duration_skills", "技能持续时间", "mod_duration", "时长", "使用代码中的时长格式，例如 300s。"),
-    SkillConfigGroup("mod_talent_skills", "天赋效果倍率", "mod_talent", "倍率"),
-    SkillConfigGroup("mod_trigger_chance_skills", "触发几率倍率", "mod_trigger_chance", "倍率"),
-)
-
-PRIEST_CONFIG_GROUPS = (
-    SkillConfigGroup("mod_gcd_time_skills", "公共冷却时间（GCD）", "mod_gcd_time", "毫秒", "0 表示无 GCD。"),
-    SkillConfigGroup("mod_duration_skills", "技能持续时间", "mod_duration", "时长", "使用代码中的时长格式，例如 1800s。"),
-    SkillConfigGroup("mod_talent_skills", "天赋效果倍率", "mod_talent", "倍率"),
-    SkillConfigGroup("mod_trigger_chance_skills", "触发几率倍率", "mod_trigger_chance", "倍率"),
-)
-
-ROGUE_CONFIG_GROUPS = (
-    SkillConfigGroup("mod_gcd_time_skills", "公共冷却时间（GCD）", "mod_gcd_time", "毫秒", "0 表示无 GCD。"),
-)
-
-SHAMAN_CONFIG_GROUPS = (
-    SkillConfigGroup("mod_dmg_skills", "技能伤害与治疗", "mod_dmg", "倍率"),
+    SkillConfigGroup("mod_duration_skills", "技能持续时间", "mod_duration", "时长"),
     SkillConfigGroup("mod_talent_skills", "天赋效果", "mod_talent", "倍率"),
+    SkillConfigGroup("mod_trigger_chance_skills", "技能触发几率", "mod_trigger_chance", "倍率"),
+    SkillConfigGroup("mod_dmg_skills", "技能伤害与治疗", "mod_dmg", "倍率"),
     SkillConfigGroup("mod_talent_dummy_skills", "Dummy 天赋效果", "mod_talent_dummy", "倍率"),
     SkillConfigGroup("mod_talent_extra_attack_skills", "额外攻击次数", "mod_talent_extra_attack", "倍率"),
     SkillConfigGroup("mod_dot_interval_skills", "持续伤害间隔", "mod_dot_interval", "倍率"),
-    SkillConfigGroup("mod_trigger_chance_skills", "技能触发几率", "mod_trigger_chance", "倍率"),
-    SkillConfigGroup("mod_duration_skills", "技能持续时间", "mod_duration", "时长"),
     SkillConfigGroup("mod_trigger_time_skills", "触发次数", "mod_trigger_time", "次数"),
     SkillConfigGroup("mod_cooldown_time_skills", "技能冷却时间", "mod_cooldown_time", "毫秒"),
     SkillConfigGroup("mod_cast_time_skills", "技能施法时间", "mod_cast_time", "时长"),
-    SkillConfigGroup("mod_gcd_time_skills", "公共冷却时间（GCD）", "mod_gcd_time", "毫秒"),
     SkillConfigGroup("mod_trigger_skills", "触发技能效果", "mod_trigger", "倍率"),
     SkillConfigGroup("mod_enchant_spell_trigger_chance_skills", "武器附魔触发率", "mod_enchant_spell_trigger_chance", "倍率"),
 )
@@ -359,27 +425,27 @@ FEATURES: tuple[Feature, ...] = (
 
     Feature(
         "class.dk.bundle", "死亡骑士", "职业技能",
-        "逐项配置死亡骑士的 GCD、持续时间、天赋倍率和触发几率。",
+        "提供完整的职业技能修改类型，并保留死亡骑士源码中的默认配置。",
         "src.customization.spell.dk", action_kind="spell_bundle", risk="high",
-        config_groups=DK_CONFIG_GROUPS,
+        config_groups=CLASS_SKILL_CONFIG_GROUPS,
     ),
     Feature(
         "class.priest.bundle", "牧师", "职业技能",
-        "逐项配置牧师的 GCD、持续时间、天赋倍率和触发几率。",
+        "提供完整的职业技能修改类型，并保留牧师源码中的默认配置。",
         "src.customization.spell.priest", action_kind="spell_bundle", risk="high",
-        config_groups=PRIEST_CONFIG_GROUPS,
+        config_groups=CLASS_SKILL_CONFIG_GROUPS,
     ),
     Feature(
         "class.rogue.bundle", "盗贼", "职业技能",
-        "逐项配置盗贼技能的公共冷却时间。",
+        "提供完整的职业技能修改类型，并保留盗贼源码中的默认配置。",
         "src.customization.spell.rogue", action_kind="spell_bundle", risk="high",
-        config_groups=ROGUE_CONFIG_GROUPS,
+        config_groups=CLASS_SKILL_CONFIG_GROUPS,
     ),
     Feature(
         "class.shaman.bundle", "萨满祭司", "职业技能",
-        "逐项配置萨满的伤害、天赋、持续时间、冷却、施法时间和触发效果。",
+        "提供完整的职业技能修改类型，并保留萨满源码中的默认配置。",
         "src.customization.spell.shaman", action_kind="spell_bundle", risk="high",
-        config_groups=SHAMAN_CONFIG_GROUPS,
+        config_groups=CLASS_SKILL_CONFIG_GROUPS,
     ),
     Feature("class.shaman.weapon_duration", "元素武器持续时间 ×12", "萨满增强", "将石化、火舌、冰封和风怒武器持续时间放大 12 倍。", "src.customization.spell.shaman", "mod_element_weapon_duration", (12,), risk="high"),
     Feature("class.shaman.two_hand", "萨满双手武器描述", "萨满增强", "修改双手斧和锤相关技能数据及中文描述。", "src.customization.spell.shaman", "mod_spell_16269", risk="high"),

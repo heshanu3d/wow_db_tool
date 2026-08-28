@@ -20,6 +20,7 @@ from src.gui.app import (
     CustomSkillsDialog,
     DbToolApp,
     ProfilesDialog,
+    ScrollFrame,
     SkillConfigView,
 )
 from src.gui.config import AppSettings, DatabaseProfile, load_settings, save_settings
@@ -27,6 +28,8 @@ from src.gui.features import (
     CUSTOM_SKILL_CONDITIONS_KEY,
     FEATURE_BY_ID,
     FEATURES,
+    SKILL_CONDITION_TEMPLATE_BY_TITLE,
+    SKILL_CONDITION_TEMPLATES,
     Feature,
     SkillConfigGroup,
     validate_skill_condition,
@@ -68,10 +71,10 @@ class GuiFoundationTests(unittest.TestCase):
                     sum(len(group) for group in defaults.values()),
                     expected_skill_counts[feature.id],
                 )
+                self.assertEqual(len(feature.config_groups), 13)
                 for group in feature.config_groups:
-                    values = getattr(module, group.config_name)
+                    values = getattr(module, group.config_name, {})
                     self.assertIsInstance(values, dict)
-                    self.assertTrue(values)
                     self.assertTrue(callable(getattr(spell.Mod, group.function)))
                     self.assertEqual(
                         {skill: item["value"] for skill, item in defaults[group.config_name].items()},
@@ -170,6 +173,39 @@ class GuiFoundationTests(unittest.TestCase):
         enabled, total = feature.configuration_summary(normalized)
         self.assertEqual(total, sum(len(normalized[g.config_name]) for g in feature.config_groups))
         self.assertGreaterEqual(enabled, 3)
+
+    def test_skill_condition_templates_render_common_cond_patterns(self):
+        self.assertGreaterEqual(len(SKILL_CONDITION_TEMPLATES), 10)
+        titles = [template.title for template in SKILL_CONDITION_TEMPLATES]
+        self.assertEqual(len(titles), len(set(titles)))
+        self.assertEqual(
+            SKILL_CONDITION_TEMPLATE_BY_TITLE["技能名称 + 全部等级"].render(
+                "死亡之握"
+            ),
+            "s.SpellName4='死亡之握' and s.SpellRank4 like '等级%'",
+        )
+        self.assertEqual(
+            SKILL_CONDITION_TEMPLATE_BY_TITLE["精确技能名称"].render("测试'技能"),
+            "s.SpellName4='测试''技能'",
+        )
+        for template in SKILL_CONDITION_TEMPLATES:
+            self.assertNotIn("{skill}", template.render("测试技能"))
+            validate_skill_condition(template.render("测试技能"))
+
+    def test_all_classes_offer_the_same_modification_types(self):
+        class_features = [
+            feature for feature in FEATURES if feature.action_kind == "spell_bundle"
+        ]
+        expected = [
+            group.config_name for group in class_features[0].config_groups
+        ]
+        self.assertEqual(len(expected), 13)
+        for feature in class_features:
+            self.assertEqual(
+                [group.config_name for group in feature.config_groups], expected
+            )
+            defaults = feature.default_configuration()
+            self.assertEqual(list(defaults), expected)
 
     def test_custom_skill_condition_rejects_unsafe_sql_and_code_name_collision(self):
         self.assertEqual(
@@ -369,7 +405,7 @@ class GuiFoundationTests(unittest.TestCase):
                 profiles=[DatabaseProfile("测试")],
                 dialog_geometries={
                     CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "880x520+40+50",
-                    CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "740x650+60+70",
+                    CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "740x700+60+70",
                 },
             ),
             profile=DatabaseProfile("测试"),
@@ -408,7 +444,16 @@ class GuiFoundationTests(unittest.TestCase):
             editor = CustomSkillEditorDialog(manager)
             editor.update()
             self.assertEqual(editor.winfo_width(), 740)
-            editor.geometry("680x620+65+75")
+            editor.skill_var.set("测试自定义技能")
+            editor.template_var.set("技能名称 + 单个 ID")
+            editor._template_selected()
+            editor._apply_condition_template()
+            self.assertEqual(
+                editor.condition_text.get("1.0", "end").strip(),
+                "s.SpellName4='测试自定义技能' and s.ID=0",
+            )
+            self.assertIn("名称和 ID", editor.template_help_var.get())
+            editor.geometry("680x680+65+75")
             editor.preview_var.set("\n".join(f"查询结果 {index}" for index in range(30)))
             editor._render_preview()
             editor.update()
@@ -430,7 +475,7 @@ class GuiFoundationTests(unittest.TestCase):
             manager = None
             calls = save_geometry.call_args_list
             self.assertEqual(calls[0].args[0], CUSTOM_SKILL_EDITOR_GEOMETRY_KEY)
-            self.assertTrue(calls[0].args[1].startswith("680x620"))
+            self.assertTrue(calls[0].args[1].startswith("680x680"))
             self.assertEqual(calls[1].args[0], CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY)
             self.assertTrue(calls[1].args[1].startswith("760x480"))
         finally:
@@ -438,6 +483,39 @@ class GuiFoundationTests(unittest.TestCase):
                 editor.destroy()
             if manager is not None and manager.winfo_exists():
                 manager.destroy()
+            root.destroy()
+
+    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
+    def test_scroll_frame_accepts_linux_mouse_wheel_buttons_over_content(self):
+        root = tk.Tk()
+        root.geometry("360x240+20+20")
+        frame = ScrollFrame(root)
+        frame.pack(fill="both", expand=True)
+        labels = []
+        try:
+            for index in range(80):
+                label = tk.Label(frame.inner, text=f"滚动内容 {index}")
+                label.pack(anchor="w", pady=2)
+                labels.append(label)
+            root.update()
+            before = frame.canvas.yview()[0]
+            # Use a currently visible child; off-screen widgets do not have a
+            # screen coordinate that winfo_containing can resolve.
+            target = labels[2]
+            event = SimpleNamespace(
+                num=5, delta=0,
+                x_root=target.winfo_rootx() + 2,
+                y_root=target.winfo_rooty() + 2,
+            )
+            self.assertEqual(frame._mousewheel(event), "break")
+            root.update()
+            self.assertGreater(frame.canvas.yview()[0], before)
+
+            event.num = 4
+            self.assertEqual(frame._mousewheel(event), "break")
+            root.update()
+            self.assertLessEqual(frame.canvas.yview()[0], before)
+        finally:
             root.destroy()
 
     @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")

@@ -15,6 +15,8 @@ from .features import (
     CUSTOM_SKILL_CONDITIONS_KEY,
     FEATURE_BY_ID,
     FEATURES,
+    SKILL_CONDITION_TEMPLATE_BY_TITLE,
+    SKILL_CONDITION_TEMPLATES,
     Feature,
     validate_skill_condition,
 )
@@ -78,11 +80,38 @@ class ScrollFrame(tk.Frame):
         self.scrollbar.pack(side="right", fill="y")
         self.inner.bind("<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.window_id, width=e.width))
-        self.canvas.bind_all("<MouseWheel>", self._mousewheel)
+        # Windows/macOS report MouseWheel; X11/Linux reports wheel buttons 4/5.
+        # bind_all keeps scrolling active while the pointer is over labels,
+        # checkboxes or entries inside the canvas rather than only the canvas itself.
+        self.bind_all("<MouseWheel>", self._mousewheel)
+        self.bind_all("<Button-4>", self._mousewheel)
+        self.bind_all("<Button-5>", self._mousewheel)
 
     def _mousewheel(self, event):
-        if self.winfo_exists() and self.winfo_containing(event.x_root, event.y_root):
-            self.canvas.yview_scroll(int(-event.delta / 120), "units")
+        try:
+            if not self.winfo_exists():
+                return None
+            target = self.winfo_containing(event.x_root, event.y_root)
+            current = target
+            while current is not None and current is not self:
+                current = getattr(current, "master", None)
+            if current is not self:
+                return None
+            if getattr(event, "num", None) == 4:
+                units = -1
+            elif getattr(event, "num", None) == 5:
+                units = 1
+            else:
+                delta = getattr(event, "delta", 0)
+                if not delta:
+                    return None
+                units = int(-delta / 120)
+                if units == 0:
+                    units = -1 if delta > 0 else 1
+            self.canvas.yview_scroll(units, "units")
+            return "break"
+        except tk.TclError:
+            return None
 
 
 class ProfilesDialog(tk.Toplevel):
@@ -265,10 +294,10 @@ class CustomSkillEditorDialog(tk.Toplevel):
         self.original_group = original_group
         self.original_skill = original_skill
         self.title("编辑自定义技能" if original_skill else "新增自定义技能")
-        self.minsize(680, 620)
+        self.minsize(680, 680)
         _restore_dialog_geometry(
             self, self.view.app.settings, CUSTOM_SKILL_EDITOR_GEOMETRY_KEY,
-            "760x680",
+            "780x740",
         )
         self.configure(bg=COLORS["paper"])
         self.transient(manager)
@@ -283,6 +312,12 @@ class CustomSkillEditorDialog(tk.Toplevel):
         self.skill_var = tk.StringVar(self, value=original_skill or "")
         self.value_var = tk.StringVar(self, value=str(current.get("value", "")))
         self.enabled_var = tk.BooleanVar(self, value=bool(current.get("enabled", True)))
+        self.template_var = tk.StringVar(
+            self, value=SKILL_CONDITION_TEMPLATES[0].title
+        )
+        self.template_help_var = tk.StringVar(
+            self, value=SKILL_CONDITION_TEMPLATES[0].description
+        )
         self.preview_var = tk.StringVar(
             self, value="填写 WHERE 后的判断表达式，然后点击“测试查询”。"
         )
@@ -333,8 +368,8 @@ class CustomSkillEditorDialog(tk.Toplevel):
         )
         form.grid(row=2, column=0, sticky="nsew")
         form.grid_columnconfigure(1, weight=1)
-        form.grid_rowconfigure(3, weight=3)
-        form.grid_rowconfigure(5, weight=2)
+        form.grid_rowconfigure(5, weight=3)
+        form.grid_rowconfigure(7, weight=2)
 
         labels = ("修改类型", "技能定义名称", "修改值")
         for row, text in enumerate(labels):
@@ -360,11 +395,32 @@ class CustomSkillEditorDialog(tk.Toplevel):
         ).pack(side="left", padx=(18, 0))
 
         tk.Label(
+            form, text="查询模板", bg=COLORS["surface"], fg=COLORS["ink"],
+            anchor="e", font=("Noto Sans CJK SC", 9, "bold"),
+        ).grid(row=3, column=0, sticky="e", padx=(18, 12), pady=(8, 4))
+        template_line = tk.Frame(form, bg=COLORS["surface"])
+        template_line.grid(row=3, column=1, sticky="ew", padx=(0, 18), pady=(8, 4))
+        self.template_box = ttk.Combobox(
+            template_line, textvariable=self.template_var, state="readonly",
+            values=[template.title for template in SKILL_CONDITION_TEMPLATES],
+        )
+        self.template_box.pack(side="left", fill="x", expand=True)
+        self.template_box.bind("<<ComboboxSelected>>", self._template_selected)
+        ttk.Button(
+            template_line, text="套用模板", command=self._apply_condition_template
+        ).pack(side="left", padx=(8, 0))
+        tk.Label(
+            form, textvariable=self.template_help_var, bg=COLORS["surface"],
+            fg=COLORS["muted"], justify="left", anchor="w", wraplength=540,
+            font=("Noto Sans CJK SC", 8),
+        ).grid(row=4, column=1, sticky="ew", padx=(0, 18), pady=(0, 4))
+
+        tk.Label(
             form, text="查询条件", bg=COLORS["surface"], fg=COLORS["ink"],
             anchor="ne", font=("Noto Sans CJK SC", 9, "bold"),
-        ).grid(row=3, column=0, sticky="ne", padx=(18, 12), pady=(10, 8))
+        ).grid(row=5, column=0, sticky="ne", padx=(18, 12), pady=(8, 8))
         condition_box = tk.Frame(form, bg=COLORS["surface"])
-        condition_box.grid(row=3, column=1, sticky="nsew", padx=(0, 18), pady=(10, 8))
+        condition_box.grid(row=5, column=1, sticky="nsew", padx=(0, 18), pady=(8, 8))
         self.condition_text = tk.Text(
             condition_box, height=6, wrap="word", undo=True,
             font=("DejaVu Sans Mono", 9), relief="solid", borderwidth=1,
@@ -382,11 +438,11 @@ class CustomSkillEditorDialog(tk.Toplevel):
                  "只填写 WHERE 后面的条件；不能包含分号、SQL 注释、SELECT 或修改数据库的语句。",
             bg=COLORS["surface"], fg=COLORS["muted"], justify="left",
             font=("Noto Sans CJK SC", 8),
-        ).grid(row=4, column=1, sticky="w", padx=(0, 18), pady=(0, 8))
+        ).grid(row=6, column=1, sticky="w", padx=(0, 18), pady=(0, 8))
 
         preview_box = tk.Frame(form, bg=COLORS["blue_soft"])
         preview_box.grid(
-            row=5, column=0, columnspan=2, sticky="nsew", padx=18, pady=(4, 14)
+            row=7, column=0, columnspan=2, sticky="nsew", padx=18, pady=(4, 14)
         )
         self.preview_text = tk.Text(
             preview_box, height=5, wrap="word", relief="flat", borderwidth=0,
@@ -407,6 +463,23 @@ class CustomSkillEditorDialog(tk.Toplevel):
             actions, text="保存并查询", style="Accent.TButton", command=self._save
         ).pack(side="right", padx=(0, 8))
         ttk.Button(actions, text="测试查询", command=self._test_query).pack(side="left")
+
+    def _selected_condition_template(self):
+        template = SKILL_CONDITION_TEMPLATE_BY_TITLE.get(self.template_var.get())
+        if template is None:
+            template = SKILL_CONDITION_TEMPLATES[0]
+            self.template_var.set(template.title)
+        return template
+
+    def _template_selected(self, _event=None) -> None:
+        self.template_help_var.set(self._selected_condition_template().description)
+
+    def _apply_condition_template(self) -> None:
+        template = self._selected_condition_template()
+        self.template_help_var.set(template.description)
+        self.condition_text.delete("1.0", "end")
+        self.condition_text.insert("1.0", template.render(self.skill_var.get()))
+        self.condition_text.focus_set()
 
     def _render_preview(self) -> None:
         self.preview_text.configure(state="normal")
