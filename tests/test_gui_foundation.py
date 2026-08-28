@@ -13,7 +13,15 @@ from unittest.mock import Mock, patch
 
 from src.core.mysql_core import Mysql
 from src.customization.base import spell
-from src.gui.app import DbToolApp, ProfilesDialog, SkillConfigView
+from src.gui.app import (
+    CUSTOM_SKILL_EDITOR_GEOMETRY_KEY,
+    CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY,
+    CustomSkillEditorDialog,
+    CustomSkillsDialog,
+    DbToolApp,
+    ProfilesDialog,
+    SkillConfigView,
+)
 from src.gui.config import AppSettings, DatabaseProfile, load_settings, save_settings
 from src.gui.features import (
     CUSTOM_SKILL_CONDITIONS_KEY,
@@ -243,13 +251,71 @@ class GuiFoundationTests(unittest.TestCase):
                 selected_profile=0,
                 window_geometry="1100x720",
                 feature_configs=feature_config,
+                dialog_geometries={
+                    CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "940x560+30+40"
+                },
             )
             save_settings(settings, path)
             loaded = load_settings(path)
             self.assertEqual(loaded.window_geometry, "1100x720")
+            self.assertEqual(
+                loaded.dialog_geometries,
+                {CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "940x560+30+40"},
+            )
             self.assertEqual(loaded.profiles[0].target_label, "wow@db.example:3307/world")
             self.assertEqual(loaded.profiles[0].connector_config()["password"], "secret")
             self.assertEqual(loaded.feature_configs, feature_config)
+
+    def test_save_dialog_geometry_updates_only_the_requested_layout(self):
+        app = SimpleNamespace(
+            settings=AppSettings(
+                profiles=[DatabaseProfile("测试")],
+                dialog_geometries={"another_dialog": "500x400+1+2"},
+            )
+        )
+
+        with patch("src.gui.app.save_settings") as persist:
+            DbToolApp.save_dialog_geometry(
+                app, CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY, "940x560+30+40"
+            )
+
+        persist.assert_called_once_with(app.settings)
+        self.assertEqual(
+            app.settings.dialog_geometries,
+            {
+                "another_dialog": "500x400+1+2",
+                CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "940x560+30+40",
+            },
+        )
+
+    def test_profile_save_keeps_dialog_layout_settings(self):
+        original_settings = AppSettings(
+            profiles=[DatabaseProfile("旧连接")],
+            window_geometry="1200x760",
+            feature_configs={"feature": {"group": {}}},
+            dialog_geometries={
+                CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "800x700+70+80"
+            },
+        )
+        app = SimpleNamespace(
+            settings=original_settings, apply_settings=Mock()
+        )
+        dialog = ProfilesDialog.__new__(ProfilesDialog)
+        dialog.app = app
+        dialog.profiles = [DatabaseProfile("新连接")]
+        dialog.form_profile_index = 0
+        dialog._commit_fields = Mock()
+        dialog.destroy = Mock()
+
+        dialog._save()
+
+        updated = app.apply_settings.call_args.args[0]
+        self.assertEqual(updated.window_geometry, "1200x760")
+        self.assertEqual(updated.feature_configs, original_settings.feature_configs)
+        self.assertEqual(
+            updated.dialog_geometries, original_settings.dialog_geometries
+        )
+        dialog.destroy.assert_called_once()
 
     def test_saving_skill_configuration_keeps_loaded_run_state(self):
         feature = FEATURE_BY_ID["class.dk.bundle"]
@@ -291,6 +357,87 @@ class GuiFoundationTests(unittest.TestCase):
                 self.assertGreater(button.winfo_height(), 1)
                 self.assertLessEqual(top + button.winfo_height(), dialog.winfo_height())
         finally:
+            root.destroy()
+
+    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
+    def test_custom_skill_dialog_buttons_stay_visible_and_layout_is_saved(self):
+        root = tk.Tk()
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        save_geometry = Mock()
+        app = SimpleNamespace(
+            settings=AppSettings(
+                profiles=[DatabaseProfile("测试")],
+                dialog_geometries={
+                    CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "880x520+40+50",
+                    CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "740x650+60+70",
+                },
+            ),
+            profile=DatabaseProfile("测试"),
+            save_dialog_geometry=save_geometry,
+        )
+        view = tk.Frame(root)
+        view.app = app
+        view.feature = feature
+        view.active_group = feature.config_groups[0]
+        view.configuration = feature.default_configuration()
+        view.custom_conditions = {}
+        view.custom_skill_rows = Mock(return_value=[])
+        view.upsert_custom_skill = Mock()
+        view.remove_custom_skill = Mock()
+        view.pack()
+        manager = None
+        editor = None
+        try:
+            manager = CustomSkillsDialog(view)
+            manager.update()
+            self.assertEqual(manager.winfo_width(), 880)
+            manager.geometry("760x480+45+55")
+            manager.update()
+
+            manager_buttons = {
+                widget.cget("text"): widget
+                for widget in descendants(manager)
+                if isinstance(widget, ttk.Button)
+            }
+            for label in ("新增技能", "编辑", "删除", "关闭"):
+                button = manager_buttons[label]
+                bottom = button.winfo_rooty() - manager.winfo_rooty() + button.winfo_height()
+                self.assertTrue(button.winfo_ismapped())
+                self.assertLessEqual(bottom, manager.winfo_height())
+
+            editor = CustomSkillEditorDialog(manager)
+            editor.update()
+            self.assertEqual(editor.winfo_width(), 740)
+            editor.geometry("680x620+65+75")
+            editor.preview_var.set("\n".join(f"查询结果 {index}" for index in range(30)))
+            editor._render_preview()
+            editor.update()
+
+            editor_buttons = {
+                widget.cget("text"): widget
+                for widget in descendants(editor)
+                if isinstance(widget, ttk.Button)
+            }
+            for label in ("测试查询", "保存并查询", "取消"):
+                button = editor_buttons[label]
+                bottom = button.winfo_rooty() - editor.winfo_rooty() + button.winfo_height()
+                self.assertTrue(button.winfo_ismapped())
+                self.assertLessEqual(bottom, editor.winfo_height())
+
+            editor._close()
+            editor = None
+            manager._close()
+            manager = None
+            calls = save_geometry.call_args_list
+            self.assertEqual(calls[0].args[0], CUSTOM_SKILL_EDITOR_GEOMETRY_KEY)
+            self.assertTrue(calls[0].args[1].startswith("680x620"))
+            self.assertEqual(calls[1].args[0], CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY)
+            self.assertTrue(calls[1].args[1].startswith("760x480"))
+        finally:
+            if editor is not None and editor.winfo_exists():
+                editor.destroy()
+            if manager is not None and manager.winfo_exists():
+                manager.destroy()
             root.destroy()
 
     @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")

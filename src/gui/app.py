@@ -41,6 +41,19 @@ COLORS = {
 }
 
 SKILL_COLUMN_MIN_SIZES = (48, 92, 150, 126, 60)
+CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY = "custom_skills_manager"
+CUSTOM_SKILL_EDITOR_GEOMETRY_KEY = "custom_skill_editor"
+
+
+def _restore_dialog_geometry(
+    dialog: tk.Toplevel, settings: AppSettings, key: str, default: str
+) -> None:
+    """Restore a saved dialog size/position, falling back if it is invalid."""
+    geometry = settings.dialog_geometries.get(key, default)
+    try:
+        dialog.geometry(geometry)
+    except tk.TclError:
+        dialog.geometry(default)
 
 
 STATUS_STYLE = {
@@ -224,6 +237,7 @@ class ProfilesDialog(tk.Toplevel):
                 profiles=[replace(profile) for profile in self.profiles],
                 selected_profile=self.form_profile_index,
                 window_geometry=self.app.settings.window_geometry,
+                dialog_geometries=copy.deepcopy(self.app.settings.dialog_geometries),
                 feature_configs=copy.deepcopy(self.app.settings.feature_configs),
             )
             # Persist first. The dialog remains open and reports an actionable
@@ -251,10 +265,14 @@ class CustomSkillEditorDialog(tk.Toplevel):
         self.original_group = original_group
         self.original_skill = original_skill
         self.title("编辑自定义技能" if original_skill else "新增自定义技能")
-        self.geometry("760x600")
-        self.minsize(680, 540)
+        self.minsize(680, 620)
+        _restore_dialog_geometry(
+            self, self.view.app.settings, CUSTOM_SKILL_EDITOR_GEOMETRY_KEY,
+            "760x680",
+        )
         self.configure(bg=COLORS["paper"])
         self.transient(manager)
+        self.protocol("WM_DELETE_WINDOW", self._close)
         self.grab_set()
 
         current = {}
@@ -269,6 +287,7 @@ class CustomSkillEditorDialog(tk.Toplevel):
             self, value="填写 WHERE 后的判断表达式，然后点击“测试查询”。"
         )
         self._build()
+        self._render_preview()
         if original_skill:
             self.condition_text.insert(
                 "1.0", self.view.custom_conditions.get(original_skill, "")
@@ -295,23 +314,27 @@ class CustomSkillEditorDialog(tk.Toplevel):
     def _build(self):
         content = tk.Frame(self, bg=COLORS["paper"])
         content.pack(fill="both", expand=True, padx=24, pady=20)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(2, weight=1)
         tk.Label(
             content, text="自定义职业技能", bg=COLORS["paper"], fg=COLORS["ink"],
             font=("Noto Sans CJK SC", 17, "bold"),
-        ).pack(anchor="w")
+        ).grid(row=0, column=0, sticky="w")
         tk.Label(
             content,
             text="查询条件会同时用于读取当前值、技能描述以及真正执行数据库修改。",
             bg=COLORS["paper"], fg=COLORS["muted"],
             font=("Noto Sans CJK SC", 9),
-        ).pack(anchor="w", pady=(4, 16))
+        ).grid(row=1, column=0, sticky="w", pady=(4, 16))
 
         form = tk.Frame(
             content, bg=COLORS["surface"], highlightbackground=COLORS["line"],
             highlightthickness=1,
         )
-        form.pack(fill="both", expand=True)
+        form.grid(row=2, column=0, sticky="nsew")
         form.grid_columnconfigure(1, weight=1)
+        form.grid_rowconfigure(3, weight=3)
+        form.grid_rowconfigure(5, weight=2)
 
         labels = ("修改类型", "技能定义名称", "修改值")
         for row, text in enumerate(labels):
@@ -342,9 +365,8 @@ class CustomSkillEditorDialog(tk.Toplevel):
         ).grid(row=3, column=0, sticky="ne", padx=(18, 12), pady=(10, 8))
         condition_box = tk.Frame(form, bg=COLORS["surface"])
         condition_box.grid(row=3, column=1, sticky="nsew", padx=(0, 18), pady=(10, 8))
-        form.grid_rowconfigure(3, weight=1)
         self.condition_text = tk.Text(
-            condition_box, height=7, wrap="word", undo=True,
+            condition_box, height=6, wrap="word", undo=True,
             font=("DejaVu Sans Mono", 9), relief="solid", borderwidth=1,
         )
         condition_scroll = ttk.Scrollbar(
@@ -361,19 +383,43 @@ class CustomSkillEditorDialog(tk.Toplevel):
             bg=COLORS["surface"], fg=COLORS["muted"], justify="left",
             font=("Noto Sans CJK SC", 8),
         ).grid(row=4, column=1, sticky="w", padx=(0, 18), pady=(0, 8))
-        tk.Label(
-            form, textvariable=self.preview_var, bg=COLORS["blue_soft"],
-            fg=COLORS["navy_2"], justify="left", anchor="nw", wraplength=560,
-            font=("Noto Sans CJK SC", 8), padx=10, pady=8,
-        ).grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(4, 14))
+
+        preview_box = tk.Frame(form, bg=COLORS["blue_soft"])
+        preview_box.grid(
+            row=5, column=0, columnspan=2, sticky="nsew", padx=18, pady=(4, 14)
+        )
+        self.preview_text = tk.Text(
+            preview_box, height=5, wrap="word", relief="flat", borderwidth=0,
+            bg=COLORS["blue_soft"], fg=COLORS["navy_2"],
+            font=("Noto Sans CJK SC", 8), padx=10, pady=8, state="disabled",
+        )
+        preview_scroll = ttk.Scrollbar(
+            preview_box, orient="vertical", command=self.preview_text.yview
+        )
+        self.preview_text.configure(yscrollcommand=preview_scroll.set)
+        self.preview_text.pack(side="left", fill="both", expand=True)
+        preview_scroll.pack(side="right", fill="y")
 
         actions = tk.Frame(content, bg=COLORS["paper"])
-        actions.pack(fill="x", pady=(14, 0))
-        ttk.Button(actions, text="取消", command=self.destroy).pack(side="right")
+        actions.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        ttk.Button(actions, text="取消", command=self._close).pack(side="right")
         ttk.Button(
             actions, text="保存并查询", style="Accent.TButton", command=self._save
         ).pack(side="right", padx=(0, 8))
         ttk.Button(actions, text="测试查询", command=self._test_query).pack(side="left")
+
+    def _render_preview(self) -> None:
+        self.preview_text.configure(state="normal")
+        self.preview_text.delete("1.0", "end")
+        self.preview_text.insert("1.0", self.preview_var.get())
+        self.preview_text.configure(state="disabled")
+
+    def _close(self) -> None:
+        self.update_idletasks()
+        self.view.app.save_dialog_geometry(
+            CUSTOM_SKILL_EDITOR_GEOMETRY_KEY, self.geometry()
+        )
+        self.destroy()
 
     def _values(self) -> tuple[str, str, str, str, bool]:
         group_name = self._selected_group_name()
@@ -410,6 +456,7 @@ class CustomSkillEditorDialog(tk.Toplevel):
         else:
             lines.append("没有匹配结果，请检查条件或当前数据库版本。")
         self.preview_var.set("\n".join(lines))
+        self._render_preview()
 
     def _save(self):
         try:
@@ -427,7 +474,7 @@ class CustomSkillEditorDialog(tk.Toplevel):
             messagebox.showerror("自定义技能无效", str(exc), parent=self)
             return
         self.manager.refresh_rows()
-        self.destroy()
+        self._close()
 
 
 class CustomSkillsDialog(tk.Toplevel):
@@ -437,10 +484,14 @@ class CustomSkillsDialog(tk.Toplevel):
         super().__init__(view)
         self.view = view
         self.title(f"{view.feature.title} · 管理自定义技能")
-        self.geometry("920x500")
-        self.minsize(760, 420)
+        self.minsize(760, 480)
+        _restore_dialog_geometry(
+            self, self.view.app.settings, CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY,
+            "920x540",
+        )
         self.configure(bg=COLORS["paper"])
         self.transient(view.winfo_toplevel())
+        self.protocol("WM_DELETE_WINDOW", self._close)
         self.grab_set()
         self.row_keys: dict[str, tuple[str, str]] = {}
         self._build()
@@ -449,19 +500,21 @@ class CustomSkillsDialog(tk.Toplevel):
     def _build(self):
         content = tk.Frame(self, bg=COLORS["paper"])
         content.pack(fill="both", expand=True, padx=22, pady=18)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(2, weight=1)
         tk.Label(
             content, text="管理自定义技能", bg=COLORS["paper"], fg=COLORS["ink"],
             font=("Noto Sans CJK SC", 17, "bold"),
-        ).pack(anchor="w")
+        ).grid(row=0, column=0, sticky="w")
         tk.Label(
             content,
             text="这里新增的技能会参与当前值/描述查询和实际应用；完成后请回到技能配置页点击“保存配置”。",
             bg=COLORS["paper"], fg=COLORS["muted"],
             font=("Noto Sans CJK SC", 9),
-        ).pack(anchor="w", pady=(4, 14))
+        ).grid(row=1, column=0, sticky="w", pady=(4, 14))
 
         table_box = tk.Frame(content, bg=COLORS["surface"])
-        table_box.pack(fill="both", expand=True)
+        table_box.grid(row=2, column=0, sticky="nsew")
         columns = ("group", "skill", "enabled", "value", "condition")
         self.tree = ttk.Treeview(table_box, columns=columns, show="headings", selectmode="browse")
         headings = {
@@ -479,11 +532,18 @@ class CustomSkillsDialog(tk.Toplevel):
         self.tree.bind("<Double-1>", lambda _event: self._edit())
 
         actions = tk.Frame(content, bg=COLORS["paper"])
-        actions.pack(fill="x", pady=(12, 0))
+        actions.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="新增技能", style="Accent.TButton", command=self._add).pack(side="left")
         ttk.Button(actions, text="编辑", command=self._edit).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="删除", command=self._delete).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="关闭", command=self.destroy).pack(side="right")
+        ttk.Button(actions, text="关闭", command=self._close).pack(side="right")
+
+    def _close(self) -> None:
+        self.update_idletasks()
+        self.view.app.save_dialog_geometry(
+            CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY, self.geometry()
+        )
+        self.destroy()
 
     def refresh_rows(self):
         self.row_keys.clear()
@@ -1671,6 +1731,16 @@ class DbToolApp(tk.Tk):
         save_settings(settings)
         self.settings = settings
         self._reload_profile_widgets(refresh=refresh)
+
+    def save_dialog_geometry(self, key: str, geometry: str) -> None:
+        """Persist one secondary window layout without rebuilding the main UI."""
+        geometries = dict(self.settings.dialog_geometries)
+        if geometries.get(key) == geometry:
+            return
+        geometries[key] = geometry
+        updated = replace(self.settings, dialog_geometries=geometries)
+        save_settings(updated)
+        self.settings = updated
 
     def save_and_reload_profiles(self, refresh=True):
         self.apply_settings(self.settings, refresh=refresh)

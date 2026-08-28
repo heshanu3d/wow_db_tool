@@ -43,6 +43,7 @@ class AppSettings:
     selected_profile: int = 0
     window_geometry: str = "1280x800"
     feature_configs: dict[str, dict[str, dict[str, dict[str, Any]]]] = field(default_factory=dict)
+    dialog_geometries: dict[str, str] = field(default_factory=dict)
 
 
 def _default_profiles() -> list[DatabaseProfile]:
@@ -67,10 +68,19 @@ def load_settings(path: Path = SETTINGS_FILE) -> AppSettings:
         feature_configs = raw.get("feature_configs", {})
         if not isinstance(feature_configs, dict):
             feature_configs = {}
+        dialog_geometries = raw.get("dialog_geometries", {})
+        if not isinstance(dialog_geometries, dict):
+            dialog_geometries = {}
+        dialog_geometries = {
+            key: value
+            for key, value in dialog_geometries.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
         return AppSettings(
             profiles=profiles,
             selected_profile=selected,
             window_geometry=raw.get("window_geometry", "1280x800"),
+            dialog_geometries=dialog_geometries,
             feature_configs=feature_configs,
         )
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -83,6 +93,7 @@ def save_settings(settings: AppSettings, path: Path = SETTINGS_FILE) -> None:
         "profiles": [asdict(profile) for profile in settings.profiles],
         "selected_profile": settings.selected_profile,
         "window_geometry": settings.window_geometry,
+        "dialog_geometries": settings.dialog_geometries,
         "feature_configs": settings.feature_configs,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
