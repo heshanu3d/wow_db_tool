@@ -15,13 +15,19 @@ import mysql.connector
 from src.customization.base import spell as spell_mod
 
 from .config import DatabaseProfile
-from .features import Feature
+from .features import Feature, validate_skill_condition
 
 
 @dataclass(frozen=True)
 class SkillDetails:
     descriptions: dict[str, str]
     current_values: dict[tuple[str, str], str]
+
+
+@dataclass(frozen=True)
+class SkillConditionPreview:
+    count: int
+    rows: list[dict[str, Any]]
 
 
 def skill_names(feature: Feature) -> list[str]:
@@ -167,19 +173,60 @@ def _lookup_index_values(cursor, table: str, value_column: str, indexes: set[int
     }
 
 
-def load_skill_details(profile: DatabaseProfile, feature: Feature) -> SkillDetails:
+def preview_skill_condition(
+    profile: DatabaseProfile, condition: Any, *, limit: int = 20
+) -> SkillConditionPreview:
+    """Run a read-only preview for a user-defined spell WHERE predicate."""
+    predicate = validate_skill_condition(condition)
+    safe_limit = max(1, min(int(limit), 100))
+    connection = mysql.connector.connect(**profile.connector_config())
+    cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute(f"SELECT COUNT(*) AS match_count FROM spell s WHERE ({predicate})")
+        count_row = cursor.fetchone() or {}
+        count = int(count_row.get("match_count") or 0)
+        cursor.execute(
+            "SELECT s.ID AS spell_id, s.SpellName4 AS spell_name, "
+            "s.SpellRank4 AS spell_rank "
+            f"FROM spell s WHERE ({predicate}) ORDER BY s.ID DESC LIMIT {safe_limit}"
+        )
+        return SkillConditionPreview(count=count, rows=list(cursor.fetchall()))
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def load_skill_details(
+    profile: DatabaseProfile, feature: Feature, configuration: Any = None
+) -> SkillDetails:
     """Read descriptions and the exact DB fields changed by every config group."""
     if not feature.configurable:
         return SkillDetails({}, {})
 
     module = importlib.import_module(feature.module)
-    configuration = feature.default_configuration()
+    if configuration is None:
+        normalized = feature.default_configuration()
+        custom_conditions: dict[str, str] = {}
+    else:
+        normalized = feature.normalize_configuration(configuration)
+        custom_conditions = feature.custom_skill_conditions(normalized, validate=True)
     names = list(
-        dict.fromkeys(skill for skills in configuration.values() for skill in skills)
+        dict.fromkeys(
+            skill
+            for group in feature.config_groups
+            for skill in normalized[group.config_name]
+        )
     )
     if not names:
         return SkillDetails({}, {})
-    conditions = {name: module.cond[name] for name in names}
+    conditions = dict(module.cond)
+    conditions.update(custom_conditions)
+    missing_conditions = [name for name in names if name not in conditions]
+    if missing_conditions:
+        raise ValueError(
+            "以下技能缺少查询条件：" + "、".join(missing_conditions)
+        )
+    conditions = {name: conditions[name] for name in names}
     flags = ", ".join(
         f"(({conditions[name]})) AS skill_match_{index}"
         for index, name in enumerate(names)
@@ -270,7 +317,7 @@ def load_skill_details(profile: DatabaseProfile, feature: Feature) -> SkillDetai
 
         for group in feature.config_groups:
             group_name = group.config_name
-            for name in configuration[group_name]:
+            for name in normalized[group_name]:
                 key = (group_name, name)
                 values: list[Any] = []
                 for row in rows_by_skill[name]:
@@ -306,8 +353,6 @@ def load_skill_details(profile: DatabaseProfile, feature: Feature) -> SkillDetai
                             cast_indexes.add(int(row["casting_time_index"]))
                     elif group.function == "mod_gcd_time":
                         if row["start_recovery_time"] is not None:
-                            # Keep 0ms rows visible after a previous application;
-                            # setting GCD to zero also changes category 133 to 0.
                             values.append(row["start_recovery_time"])
                     elif group.function == "mod_trigger":
                         trigger_id = row["effect_trigger_spell_1"]
@@ -405,6 +450,8 @@ def load_skill_details(profile: DatabaseProfile, feature: Feature) -> SkillDetai
         connection.close()
 
 
-def load_skill_descriptions(profile: DatabaseProfile, feature: Feature) -> dict[str, str]:
+def load_skill_descriptions(
+    profile: DatabaseProfile, feature: Feature, configuration: Any = None
+) -> dict[str, str]:
     """Backward-compatible description-only facade."""
-    return load_skill_details(profile, feature).descriptions
+    return load_skill_details(profile, feature, configuration).descriptions

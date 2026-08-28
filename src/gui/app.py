@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import queue
 import threading
 import tkinter as tk
@@ -9,9 +10,16 @@ from tkinter import messagebox, ttk
 from typing import Callable
 
 from .config import AppSettings, DatabaseProfile, load_settings, save_settings
-from .features import CATEGORIES, FEATURE_BY_ID, FEATURES, Feature
+from .features import (
+    CATEGORIES,
+    CUSTOM_SKILL_CONDITIONS_KEY,
+    FEATURE_BY_ID,
+    FEATURES,
+    Feature,
+    validate_skill_condition,
+)
 from .runner import RunResult, run_feature
-from .skill_descriptions import load_skill_details
+from .skill_descriptions import load_skill_details, preview_skill_condition
 from .state import FeatureRun, FeatureStateStore
 
 COLORS = {
@@ -31,6 +39,9 @@ COLORS = {
     "blue_soft": "#E3EDF7",
     "slate_soft": "#E9EDF2",
 }
+
+SKILL_COLUMN_MIN_SIZES = (48, 92, 150, 126, 60)
+
 
 STATUS_STYLE = {
     "none": ("未应用", COLORS["muted"], COLORS["slate_soft"]),
@@ -225,6 +236,298 @@ class ProfilesDialog(tk.Toplevel):
         self.destroy()
 
 
+class CustomSkillEditorDialog(tk.Toplevel):
+    """Add or edit one GUI-defined spell condition and modification."""
+
+    def __init__(
+        self,
+        manager: "CustomSkillsDialog",
+        original_group: str | None = None,
+        original_skill: str | None = None,
+    ):
+        super().__init__(manager)
+        self.manager = manager
+        self.view = manager.view
+        self.original_group = original_group
+        self.original_skill = original_skill
+        self.title("编辑自定义技能" if original_skill else "新增自定义技能")
+        self.geometry("760x600")
+        self.minsize(680, 540)
+        self.configure(bg=COLORS["paper"])
+        self.transient(manager)
+        self.grab_set()
+
+        current = {}
+        if original_group and original_skill:
+            current = self.view.configuration[original_group][original_skill]
+        initial_group = original_group or self.view.active_group.config_name
+        self.group_var = tk.StringVar(self, value=self._group_title(initial_group))
+        self.skill_var = tk.StringVar(self, value=original_skill or "")
+        self.value_var = tk.StringVar(self, value=str(current.get("value", "")))
+        self.enabled_var = tk.BooleanVar(self, value=bool(current.get("enabled", True)))
+        self.preview_var = tk.StringVar(
+            self, value="填写 WHERE 后的判断表达式，然后点击“测试查询”。"
+        )
+        self._build()
+        if original_skill:
+            self.condition_text.insert(
+                "1.0", self.view.custom_conditions.get(original_skill, "")
+            )
+        self.skill_entry.focus_set()
+
+    def _group_title(self, group_name: str) -> str:
+        group = next(
+            item for item in self.view.feature.config_groups
+            if item.config_name == group_name
+        )
+        return group.title
+
+    def _selected_group_name(self) -> str:
+        title = self.group_var.get()
+        group = next(
+            (item for item in self.view.feature.config_groups if item.title == title),
+            None,
+        )
+        if group is None:
+            raise ValueError("请选择有效的技能修改类型。")
+        return group.config_name
+
+    def _build(self):
+        content = tk.Frame(self, bg=COLORS["paper"])
+        content.pack(fill="both", expand=True, padx=24, pady=20)
+        tk.Label(
+            content, text="自定义职业技能", bg=COLORS["paper"], fg=COLORS["ink"],
+            font=("Noto Sans CJK SC", 17, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            content,
+            text="查询条件会同时用于读取当前值、技能描述以及真正执行数据库修改。",
+            bg=COLORS["paper"], fg=COLORS["muted"],
+            font=("Noto Sans CJK SC", 9),
+        ).pack(anchor="w", pady=(4, 16))
+
+        form = tk.Frame(
+            content, bg=COLORS["surface"], highlightbackground=COLORS["line"],
+            highlightthickness=1,
+        )
+        form.pack(fill="both", expand=True)
+        form.grid_columnconfigure(1, weight=1)
+
+        labels = ("修改类型", "技能定义名称", "修改值")
+        for row, text in enumerate(labels):
+            tk.Label(
+                form, text=text, bg=COLORS["surface"], fg=COLORS["ink"],
+                anchor="e", font=("Noto Sans CJK SC", 9, "bold"),
+            ).grid(row=row, column=0, sticky="e", padx=(18, 12), pady=(16 if row == 0 else 8, 8))
+
+        self.group_box = ttk.Combobox(
+            form, textvariable=self.group_var, state="readonly",
+            values=[group.title for group in self.view.feature.config_groups],
+        )
+        self.group_box.grid(row=0, column=1, sticky="ew", padx=(0, 18), pady=(16, 8))
+        self.skill_entry = ttk.Entry(form, textvariable=self.skill_var)
+        self.skill_entry.grid(row=1, column=1, sticky="ew", padx=(0, 18), pady=8)
+        value_line = tk.Frame(form, bg=COLORS["surface"])
+        value_line.grid(row=2, column=1, sticky="ew", padx=(0, 18), pady=8)
+        ttk.Entry(value_line, textvariable=self.value_var, width=22).pack(side="left")
+        tk.Checkbutton(
+            value_line, text="新增后启用", variable=self.enabled_var,
+            bg=COLORS["surface"], activebackground=COLORS["surface"],
+            highlightthickness=0,
+        ).pack(side="left", padx=(18, 0))
+
+        tk.Label(
+            form, text="查询条件", bg=COLORS["surface"], fg=COLORS["ink"],
+            anchor="ne", font=("Noto Sans CJK SC", 9, "bold"),
+        ).grid(row=3, column=0, sticky="ne", padx=(18, 12), pady=(10, 8))
+        condition_box = tk.Frame(form, bg=COLORS["surface"])
+        condition_box.grid(row=3, column=1, sticky="nsew", padx=(0, 18), pady=(10, 8))
+        form.grid_rowconfigure(3, weight=1)
+        self.condition_text = tk.Text(
+            condition_box, height=7, wrap="word", undo=True,
+            font=("DejaVu Sans Mono", 9), relief="solid", borderwidth=1,
+        )
+        condition_scroll = ttk.Scrollbar(
+            condition_box, orient="vertical", command=self.condition_text.yview
+        )
+        self.condition_text.configure(yscrollcommand=condition_scroll.set)
+        self.condition_text.pack(side="left", fill="both", expand=True)
+        condition_scroll.pack(side="right", fill="y")
+
+        tk.Label(
+            form,
+            text="示例：s.SpellName4='死亡之握' and s.ID=49576\n"
+                 "只填写 WHERE 后面的条件；不能包含分号、SQL 注释、SELECT 或修改数据库的语句。",
+            bg=COLORS["surface"], fg=COLORS["muted"], justify="left",
+            font=("Noto Sans CJK SC", 8),
+        ).grid(row=4, column=1, sticky="w", padx=(0, 18), pady=(0, 8))
+        tk.Label(
+            form, textvariable=self.preview_var, bg=COLORS["blue_soft"],
+            fg=COLORS["navy_2"], justify="left", anchor="nw", wraplength=560,
+            font=("Noto Sans CJK SC", 8), padx=10, pady=8,
+        ).grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(4, 14))
+
+        actions = tk.Frame(content, bg=COLORS["paper"])
+        actions.pack(fill="x", pady=(14, 0))
+        ttk.Button(actions, text="取消", command=self.destroy).pack(side="right")
+        ttk.Button(
+            actions, text="保存并查询", style="Accent.TButton", command=self._save
+        ).pack(side="right", padx=(0, 8))
+        ttk.Button(actions, text="测试查询", command=self._test_query).pack(side="left")
+
+    def _values(self) -> tuple[str, str, str, str, bool]:
+        group_name = self._selected_group_name()
+        skill = self.skill_var.get().strip()
+        value = self.value_var.get().strip()
+        condition = validate_skill_condition(self.condition_text.get("1.0", "end"))
+        if not skill:
+            raise ValueError("技能定义名称不能为空。")
+        if len(skill) > 80:
+            raise ValueError("技能定义名称不能超过 80 个字符。")
+        self.view.feature.validate_custom_skill_value(group_name, skill, value)
+        return group_name, skill, value, condition, self.enabled_var.get()
+
+    def _test_query(self):
+        try:
+            condition = validate_skill_condition(
+                self.condition_text.get("1.0", "end")
+            )
+            self.config(cursor="watch")
+            self.update_idletasks()
+            preview = preview_skill_condition(self.view.app.profile, condition)
+        except Exception as exc:
+            messagebox.showerror("测试查询失败", str(exc), parent=self)
+            return
+        finally:
+            self.config(cursor="")
+        lines = [f"匹配 {preview.count} 条 spell 记录（最多显示 20 条）："]
+        if preview.rows:
+            lines.extend(
+                f"ID {row.get('spell_id')} · {row.get('spell_name') or '未命名'}"
+                f" · {row.get('spell_rank') or '无等级'}"
+                for row in preview.rows
+            )
+        else:
+            lines.append("没有匹配结果，请检查条件或当前数据库版本。")
+        self.preview_var.set("\n".join(lines))
+
+    def _save(self):
+        try:
+            group_name, skill, value, condition, enabled = self._values()
+            self.view.upsert_custom_skill(
+                self.original_group,
+                self.original_skill,
+                group_name,
+                skill,
+                condition,
+                value,
+                enabled,
+            )
+        except ValueError as exc:
+            messagebox.showerror("自定义技能无效", str(exc), parent=self)
+            return
+        self.manager.refresh_rows()
+        self.destroy()
+
+
+class CustomSkillsDialog(tk.Toplevel):
+    """Manage all GUI-defined skills for one class feature."""
+
+    def __init__(self, view: "SkillConfigView"):
+        super().__init__(view)
+        self.view = view
+        self.title(f"{view.feature.title} · 管理自定义技能")
+        self.geometry("920x500")
+        self.minsize(760, 420)
+        self.configure(bg=COLORS["paper"])
+        self.transient(view.winfo_toplevel())
+        self.grab_set()
+        self.row_keys: dict[str, tuple[str, str]] = {}
+        self._build()
+        self.refresh_rows()
+
+    def _build(self):
+        content = tk.Frame(self, bg=COLORS["paper"])
+        content.pack(fill="both", expand=True, padx=22, pady=18)
+        tk.Label(
+            content, text="管理自定义技能", bg=COLORS["paper"], fg=COLORS["ink"],
+            font=("Noto Sans CJK SC", 17, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            content,
+            text="这里新增的技能会参与当前值/描述查询和实际应用；完成后请回到技能配置页点击“保存配置”。",
+            bg=COLORS["paper"], fg=COLORS["muted"],
+            font=("Noto Sans CJK SC", 9),
+        ).pack(anchor="w", pady=(4, 14))
+
+        table_box = tk.Frame(content, bg=COLORS["surface"])
+        table_box.pack(fill="both", expand=True)
+        columns = ("group", "skill", "enabled", "value", "condition")
+        self.tree = ttk.Treeview(table_box, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "group": "修改类型", "skill": "技能定义", "enabled": "启用",
+            "value": "修改值", "condition": "查询条件",
+        }
+        widths = {"group": 170, "skill": 130, "enabled": 55, "value": 90, "condition": 400}
+        for column in columns:
+            self.tree.heading(column, text=headings[column])
+            self.tree.column(column, width=widths[column], minwidth=50, stretch=column == "condition")
+        scrollbar = ttk.Scrollbar(table_box, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.bind("<Double-1>", lambda _event: self._edit())
+
+        actions = tk.Frame(content, bg=COLORS["paper"])
+        actions.pack(fill="x", pady=(12, 0))
+        ttk.Button(actions, text="新增技能", style="Accent.TButton", command=self._add).pack(side="left")
+        ttk.Button(actions, text="编辑", command=self._edit).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="删除", command=self._delete).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="关闭", command=self.destroy).pack(side="right")
+
+    def refresh_rows(self):
+        self.row_keys.clear()
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for index, row in enumerate(self.view.custom_skill_rows()):
+            group_name, group_title, skill, enabled, value, condition = row
+            item_id = f"custom-{index}"
+            self.row_keys[item_id] = (group_name, skill)
+            self.tree.insert(
+                "", "end", iid=item_id,
+                values=(group_title, skill, "是" if enabled else "否", value, condition),
+            )
+
+    def _selected(self) -> tuple[str, str] | None:
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        return self.row_keys.get(selection[0])
+
+    def _add(self):
+        CustomSkillEditorDialog(self)
+
+    def _edit(self):
+        selected = self._selected()
+        if selected is None:
+            messagebox.showinfo("请选择技能", "请先选择需要编辑的自定义技能。", parent=self)
+            return
+        CustomSkillEditorDialog(self, *selected)
+
+    def _delete(self):
+        selected = self._selected()
+        if selected is None:
+            messagebox.showinfo("请选择技能", "请先选择需要删除的自定义技能。", parent=self)
+            return
+        group_name, skill = selected
+        if not messagebox.askyesno(
+            "删除自定义技能", f"确定从此修改类型中删除“{skill}”吗？", parent=self
+        ):
+            return
+        self.view.remove_custom_skill(group_name, skill)
+        self.refresh_rows()
+
+
 class SkillConfigView(tk.Frame):
     """Detailed per-skill editor for one class bundle."""
 
@@ -241,7 +544,11 @@ class SkillConfigView(tk.Frame):
         saved = navigation_state.get(
             "configuration", app.settings.feature_configs.get(feature.id, {})
         )
-        self.configuration = feature.normalize_configuration(saved)
+        normalized = feature.normalize_configuration(saved)
+        self.custom_conditions = dict(
+            normalized.pop(CUSTOM_SKILL_CONDITIONS_KEY, {})
+        )
+        self.configuration = normalized
         self.group_scroll_positions = dict(
             navigation_state.get("group_scroll_positions", {})
         )
@@ -250,18 +557,10 @@ class SkillConfigView(tk.Frame):
         self.value_vars: dict[tuple[str, str], tk.StringVar] = {}
         self.current_value_vars: dict[tuple[str, str], tk.StringVar] = {}
         self.description_vars: dict[str, tk.StringVar] = {}
-        for group_name, skills in self.configuration.items():
-            for skill, item in skills.items():
-                key = (group_name, skill)
-                self.enabled_vars[key] = tk.BooleanVar(self, value=item["enabled"])
-                self.value_vars[key] = tk.StringVar(self, value=item["value"])
-                self.current_value_vars[key] = tk.StringVar(
-                    self, value="正在读取…"
-                )
-                if skill not in self.description_vars:
-                    self.description_vars[skill] = tk.StringVar(
-                        self, value="正在从当前数据库读取…"
-                    )
+        self.column_header_widgets: dict[int, tk.Widget] = {}
+        self.row_column_widgets: dict[tuple[str, str], dict[int, tk.Widget]] = {}
+        self.detail_request_id = 0
+        self._initialize_variables()
         active_group_name = navigation_state.get("active_group")
         self.active_group = next(
             (
@@ -281,9 +580,47 @@ class SkillConfigView(tk.Frame):
         self._update_summary()
         self._request_details()
 
+    def _initialize_variables(self):
+        for group in self.feature.config_groups:
+            group_name = group.config_name
+            for skill, item in self.configuration[group_name].items():
+                key = (group_name, skill)
+                self.enabled_vars[key] = tk.BooleanVar(
+                    self, value=item["enabled"]
+                )
+                self.value_vars[key] = tk.StringVar(self, value=item["value"])
+                self.current_value_vars[key] = tk.StringVar(
+                    self, value="正在读取…"
+                )
+                if skill not in self.description_vars:
+                    self.description_vars[skill] = tk.StringVar(
+                        self, value="正在从当前数据库读取…"
+                    )
+
+    @staticmethod
+    def _configure_skill_columns(frame: tk.Frame):
+        for column, minsize in enumerate(SKILL_COLUMN_MIN_SIZES):
+            frame.grid_columnconfigure(
+                column, minsize=minsize, weight=1 if column == 4 else 0
+            )
+
     def _build(self):
         header = tk.Frame(self, bg=COLORS["paper"])
         header.pack(fill="x", padx=28, pady=(22, 14))
+        # Pack actions first so Tk reserves their full requested width at the
+        # application's minimum size. The title area is the flexible region.
+        header_actions = tk.Frame(header, bg=COLORS["paper"])
+        header_actions.pack(side="right", anchor="s")
+        ttk.Button(
+            header_actions, text="管理自定义技能", command=self._manage_custom_skills
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            header_actions, text="恢复代码默认值", command=self._reset_defaults
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            header_actions, text="保存配置", style="Accent.TButton", command=self._save
+        ).pack(side="left")
+
         title_box = tk.Frame(header, bg=COLORS["paper"])
         title_box.pack(side="left", fill="x", expand=True)
         ttk.Button(
@@ -294,14 +631,10 @@ class SkillConfigView(tk.Frame):
             fg=COLORS["ink"], font=("Noto Sans CJK SC", 21, "bold"),
         ).pack(anchor="w")
         tk.Label(
-            title_box, text="勾选需要修改的技能，并填写目标数值或倍率。默认值来自当前代码。",
+            title_box,
+            text="勾选需要修改的技能，并填写目标数值或倍率。代码技能使用默认值，也可在 GUI 中添加自定义技能。",
             bg=COLORS["paper"], fg=COLORS["muted"], font=("Noto Sans CJK SC", 9),
         ).pack(anchor="w", pady=(4, 0))
-
-        header_actions = tk.Frame(header, bg=COLORS["paper"])
-        header_actions.pack(side="right", anchor="s")
-        ttk.Button(header_actions, text="恢复代码默认值", command=self._reset_defaults).pack(side="left", padx=(0, 8))
-        ttk.Button(header_actions, text="保存配置", style="Accent.TButton", command=self._save).pack(side="left")
 
         summary = tk.Frame(self, bg=COLORS["navy"], height=48)
         summary.pack(fill="x", padx=28, pady=(0, 14))
@@ -333,16 +666,22 @@ class SkillConfigView(tk.Frame):
             selectforeground="white", font=("Noto Sans CJK SC", 9),
         )
         self.group_list.pack(fill="both", expand=True, padx=8, pady=(0, 10))
-        for group in self.feature.config_groups:
-            count = len(self.configuration[group.config_name])
-            self.group_list.insert("end", f"  {group.title}  ·  {count}")
-        active_index = self.feature.config_groups.index(self.active_group)
-        self.group_list.selection_set(active_index)
-        self.group_list.see(active_index)
+        self._refresh_group_list()
         self.group_list.bind("<<ListboxSelect>>", self._group_selected)
 
         self.detail = ScrollFrame(body, bg=COLORS["paper"])
         self.detail.pack(side="left", fill="both", expand=True, padx=(16, 0))
+
+    def _refresh_group_list(self):
+        if not hasattr(self, "group_list"):
+            return
+        active_index = self.feature.config_groups.index(self.active_group) if hasattr(self, "active_group") else 0
+        self.group_list.delete(0, "end")
+        for group in self.feature.config_groups:
+            count = len(self.configuration[group.config_name])
+            self.group_list.insert("end", f"  {group.title}  ·  {count}")
+        self.group_list.selection_set(active_index)
+        self.group_list.see(active_index)
 
     def _group_selected(self, _event=None):
         selected = self.group_list.curselection()
@@ -371,9 +710,6 @@ class SkillConfigView(tk.Frame):
                 or self.active_group.config_name != group_name
             ):
                 return
-            # The replacement rows have just been created. Recalculate the
-            # canvas region before restoring its saved fraction; otherwise Tk
-            # may still clamp against the previous (often much shorter) group.
             self.detail.inner.update_idletasks()
             self.detail.canvas.configure(
                 scrollregion=self.detail.canvas.bbox("all")
@@ -397,8 +733,12 @@ class SkillConfigView(tk.Frame):
         parent = self.detail.inner
         for child in parent.winfo_children():
             child.destroy()
+        self.row_column_widgets = {}
 
-        section = tk.Frame(parent, bg=COLORS["surface"], highlightbackground=COLORS["line"], highlightthickness=1)
+        section = tk.Frame(
+            parent, bg=COLORS["surface"], highlightbackground=COLORS["line"],
+            highlightthickness=1,
+        )
         section.pack(fill="x")
         section_header = tk.Frame(section, bg=COLORS["surface"])
         section_header.pack(fill="x", padx=18, pady=(16, 12))
@@ -415,65 +755,89 @@ class SkillConfigView(tk.Frame):
             ).pack(anchor="w", pady=(3, 0))
         tools = tk.Frame(section_header, bg=COLORS["surface"])
         tools.pack(side="right")
-        ttk.Button(tools, text="全选", style="Quiet.TButton", command=lambda: self._set_group_enabled(True)).pack(side="left")
-        ttk.Button(tools, text="全不选", style="Quiet.TButton", command=lambda: self._set_group_enabled(False)).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            tools, text="新增技能", style="Quiet.TButton",
+            command=self._manage_custom_skills,
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            tools, text="全选", style="Quiet.TButton",
+            command=lambda: self._set_group_enabled(True),
+        ).pack(side="left")
+        ttk.Button(
+            tools, text="全不选", style="Quiet.TButton",
+            command=lambda: self._set_group_enabled(False),
+        ).pack(side="left", padx=(6, 0))
 
         columns = tk.Frame(section, bg=COLORS["slate_soft"])
         columns.pack(fill="x", padx=1)
-        columns.grid_columnconfigure(4, weight=1)
-        tk.Label(
-            columns, text="启用", width=6, bg=COLORS["slate_soft"],
-            fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
-        ).grid(row=0, column=0, pady=7)
-        tk.Label(
-            columns, text="技能", width=10, anchor="w", bg=COLORS["slate_soft"],
-            fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
-        ).grid(row=0, column=1, sticky="w")
-        tk.Label(
-            columns, text="修改值", width=18, anchor="w", bg=COLORS["slate_soft"],
-            fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
-        ).grid(row=0, column=2, sticky="w")
-        tk.Label(
-            columns, text="当前值", width=17, anchor="w", bg=COLORS["slate_soft"],
-            fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
-        ).grid(row=0, column=3, sticky="w")
-        tk.Label(
-            columns, text="技能描述", anchor="w", bg=COLORS["slate_soft"],
-            fg=COLORS["muted"], font=("Noto Sans CJK SC", 8, "bold"),
-        ).grid(row=0, column=4, sticky="ew", padx=(6, 10))
+        self._configure_skill_columns(columns)
+        headings = ("启用", "技能", "修改值", "当前值", "技能描述")
+        for column, text in enumerate(headings):
+            label = tk.Label(
+                columns, text=text, anchor="center" if column == 0 else "w",
+                bg=COLORS["slate_soft"], fg=COLORS["muted"],
+                font=("Noto Sans CJK SC", 8, "bold"),
+            )
+            label.grid(
+                row=0, column=column,
+                sticky="ew" if column in (0, 4) else "w",
+                padx=(8, 8), pady=7,
+            )
+            self.column_header_widgets[column] = label
 
         skills = self.configuration[self.active_group.config_name]
         for index, skill in enumerate(skills):
             row_bg = COLORS["surface"] if index % 2 == 0 else "#F8FAFC"
-            row = tk.Frame(section, bg=row_bg, highlightbackground=COLORS["line"], highlightthickness=0)
+            row = tk.Frame(section, bg=row_bg)
             row.pack(fill="x", padx=1)
-            row.grid_columnconfigure(4, weight=1)
+            self._configure_skill_columns(row)
             key = (self.active_group.config_name, skill)
-            tk.Checkbutton(
+            widgets: dict[int, tk.Widget] = {}
+            enabled = tk.Checkbutton(
                 row, variable=self.enabled_vars[key], command=self._update_summary,
-                bg=row_bg, activebackground=row_bg, highlightthickness=0, width=4,
-            ).grid(row=0, column=0, padx=(7, 2), pady=7)
-            tk.Label(
-                row, text=skill, width=10, anchor="w", bg=row_bg, fg=COLORS["ink"],
-                font=("Noto Sans CJK SC", 9),
-            ).grid(row=0, column=1, sticky="nw", pady=8)
+                bg=row_bg, activebackground=row_bg, highlightthickness=0,
+            )
+            enabled.grid(row=0, column=0, sticky="n", padx=8, pady=7)
+            widgets[0] = enabled
+            skill_label = tk.Label(
+                row, text=skill, width=10, anchor="w", justify="left", wraplength=96,
+                bg=row_bg, fg=COLORS["ink"], font=("Noto Sans CJK SC", 9),
+            )
+            skill_label.grid(row=0, column=1, sticky="nw", padx=8, pady=8)
+            widgets[1] = skill_label
             value_box = tk.Frame(row, bg=row_bg)
-            value_box.grid(row=0, column=2, sticky="nw", padx=(0, 6), pady=6)
-            ttk.Entry(value_box, textvariable=self.value_vars[key], width=9).pack(side="left")
+            value_box.grid(row=0, column=2, sticky="nw", padx=8, pady=6)
+            ttk.Entry(
+                value_box, textvariable=self.value_vars[key], width=9
+            ).pack(side="left")
             tk.Label(
                 value_box, text=self.active_group.value_label, width=6, anchor="w",
                 bg=row_bg, fg=COLORS["muted"], font=("Noto Sans CJK SC", 8),
             ).pack(side="left", padx=(5, 0))
-            tk.Label(
-                row, textvariable=self.current_value_vars[key], width=17,
-                anchor="w", justify="left", wraplength=125,
-                bg=row_bg, fg=COLORS["ink"], font=("Noto Sans CJK SC", 8),
-            ).grid(row=0, column=3, sticky="nw", pady=7)
-            tk.Label(
-                row, textvariable=self.description_vars[skill], anchor="w", justify="left",
-                wraplength=210, bg=row_bg, fg=COLORS["muted"],
+            widgets[2] = value_box
+            current_label = tk.Label(
+                row, textvariable=self.current_value_vars[key], width=17, anchor="w",
+                justify="left", wraplength=110, bg=row_bg, fg=COLORS["ink"],
                 font=("Noto Sans CJK SC", 8),
-            ).grid(row=0, column=4, sticky="ew", padx=(6, 10), pady=7)
+            )
+            current_label.grid(row=0, column=3, sticky="nw", padx=8, pady=7)
+            widgets[3] = current_label
+            description_label = tk.Label(
+                row, textvariable=self.description_vars[skill], anchor="w",
+                justify="left", wraplength=100, bg=row_bg, fg=COLORS["muted"],
+                font=("Noto Sans CJK SC", 8),
+            )
+            description_label.grid(
+                row=0, column=4, sticky="ew", padx=8, pady=7
+            )
+            description_label.bind(
+                "<Configure>",
+                lambda event, label=description_label: label.configure(
+                    wraplength=max(90, event.width - 4)
+                ),
+            )
+            widgets[4] = description_label
+            self.row_column_widgets[key] = widgets
         group_name = self.active_group.config_name
         self.after_idle(lambda: self._restore_group_scroll(group_name))
 
@@ -482,7 +846,22 @@ class SkillConfigView(tk.Frame):
         if request is None:
             self._details_loaded({}, {}, "当前界面不支持数据库技能数据查询")
             return
-        request(self.feature, self._details_loaded)
+        self.detail_request_id += 1
+        request_id = self.detail_request_id
+        self.description_status_var.set("正在从当前数据库读取技能当前值与描述")
+
+        def callback(descriptions, current_values, error=""):
+            if request_id != self.detail_request_id:
+                return
+            self._details_loaded(descriptions, current_values, error)
+
+        configuration = self._collect()
+        try:
+            request(self.feature, callback, configuration)
+        except TypeError:
+            # Compatibility with small test/fake app objects that still expose
+            # the earlier two-argument callback API.
+            request(self.feature, callback)
 
     def _details_loaded(
         self,
@@ -533,34 +912,167 @@ class SkillConfigView(tk.Frame):
 
     def _update_summary(self):
         enabled = sum(1 for variable in self.enabled_vars.values() if variable.get())
+        custom_count = sum(
+            1
+            for group in self.feature.config_groups
+            for skill in self.configuration[group.config_name]
+            if skill in self.custom_conditions
+        )
         self.summary_var.set(
             f"已启用 {enabled} / {len(self.enabled_vars)} 个技能  ·  "
-            f"{len(self.feature.config_groups)} 类修改"
+            f"{len(self.feature.config_groups)} 类修改  ·  自定义 {custom_count} 项"
         )
 
     def _collect(self):
-        configuration: dict[str, dict[str, dict[str, object]]] = {}
+        configuration: dict[str, object] = {}
         for group in self.feature.config_groups:
             configuration[group.config_name] = {}
+            group_values = configuration[group.config_name]
             for skill in self.configuration[group.config_name]:
                 key = (group.config_name, skill)
-                configuration[group.config_name][skill] = {
+                group_values[skill] = {
                     "enabled": self.enabled_vars[key].get(),
                     "value": self.value_vars[key].get().strip(),
                 }
+        configuration[CUSTOM_SKILL_CONDITIONS_KEY] = dict(self.custom_conditions)
         return configuration
 
-    def _reset_defaults(self):
-        if not messagebox.askyesno("恢复默认配置", "将所有技能恢复为当前代码中的默认启用状态和数值？", parent=self):
-            return
-        defaults = self.feature.default_configuration()
-        for group_name, skills in defaults.items():
-            for skill, item in skills.items():
-                key = (group_name, skill)
-                self.enabled_vars[key].set(item["enabled"])
-                self.value_vars[key].set(item["value"])
+    def custom_skill_rows(self):
+        rows = []
+        for group in self.feature.config_groups:
+            for skill, item in self.configuration[group.config_name].items():
+                if skill not in self.custom_conditions:
+                    continue
+                key = (group.config_name, skill)
+                rows.append(
+                    (
+                        group.config_name,
+                        group.title,
+                        skill,
+                        self.enabled_vars[key].get(),
+                        self.value_vars[key].get(),
+                        self.custom_conditions[skill],
+                    )
+                )
+        return rows
+
+    def _manage_custom_skills(self):
+        CustomSkillsDialog(self)
+
+    def _activate_group(self, group_name: str):
+        group = next(
+            item for item in self.feature.config_groups
+            if item.config_name == group_name
+        )
+        if self.active_group.config_name != group_name:
+            self._remember_active_group_scroll()
+            self.active_group = group
+        index = self.feature.config_groups.index(group)
+        self.group_list.selection_clear(0, "end")
+        self.group_list.selection_set(index)
+        self.group_list.see(index)
+
+    def upsert_custom_skill(
+        self,
+        original_group: str | None,
+        original_skill: str | None,
+        group_name: str,
+        skill: str,
+        condition: str,
+        value: str,
+        enabled: bool,
+    ):
+        skill = str(skill or "").strip()
+        condition = validate_skill_condition(condition)
+        self.feature.validate_custom_skill_value(group_name, skill, value)
+        module = importlib.import_module(self.feature.module)
+        if skill in module.cond:
+            raise ValueError(
+                f"“{skill}”已经由职业代码中的 cond 定义，请直接配置现有技能或使用不同的自定义名称。"
+            )
+        if group_name not in self.configuration:
+            raise ValueError("请选择有效的技能修改类型。")
+        existing = skill in self.configuration[group_name]
+        same_row = original_group == group_name and original_skill == skill
+        if existing and not same_row:
+            raise ValueError(f"当前修改类型中已经存在“{skill}”。")
+        if original_group and original_skill:
+            if original_skill not in self.custom_conditions:
+                raise ValueError("只能通过此窗口编辑 GUI 中新增的技能。")
+            old_key = (original_group, original_skill)
+            self.configuration[original_group].pop(original_skill, None)
+            self.enabled_vars.pop(old_key, None)
+            self.value_vars.pop(old_key, None)
+            self.current_value_vars.pop(old_key, None)
+
+        self.configuration[group_name][skill] = {
+            "enabled": bool(enabled), "value": str(value).strip()
+        }
+        key = (group_name, skill)
+        self.enabled_vars[key] = tk.BooleanVar(self, value=bool(enabled))
+        self.value_vars[key] = tk.StringVar(self, value=str(value).strip())
+        self.current_value_vars[key] = tk.StringVar(self, value="正在读取…")
+        if skill not in self.description_vars:
+            self.description_vars[skill] = tk.StringVar(
+                self, value="正在从当前数据库读取…"
+            )
+        else:
+            self.description_vars[skill].set("正在从当前数据库读取…")
+        self.custom_conditions[skill] = condition
+
+        if original_skill and original_skill != skill:
+            still_used = any(
+                original_skill in self.configuration[group.config_name]
+                for group in self.feature.config_groups
+            )
+            if not still_used:
+                self.custom_conditions.pop(original_skill, None)
+                self.description_vars.pop(original_skill, None)
+
+        self._activate_group(group_name)
+        self._refresh_group_list()
         self._render_group()
         self._update_summary()
+        self._request_details()
+
+    def remove_custom_skill(self, group_name: str, skill: str):
+        if skill not in self.custom_conditions:
+            raise ValueError("只能删除 GUI 中新增的技能。")
+        self.configuration[group_name].pop(skill, None)
+        key = (group_name, skill)
+        self.enabled_vars.pop(key, None)
+        self.value_vars.pop(key, None)
+        self.current_value_vars.pop(key, None)
+        still_used = any(
+            skill in self.configuration[group.config_name]
+            for group in self.feature.config_groups
+        )
+        if not still_used:
+            self.custom_conditions.pop(skill, None)
+            self.description_vars.pop(skill, None)
+        self._refresh_group_list()
+        self._render_group()
+        self._update_summary()
+        self._request_details()
+
+    def _reset_defaults(self):
+        if not messagebox.askyesno(
+            "恢复默认配置",
+            "将所有技能恢复为当前代码中的默认启用状态和数值，并删除 GUI 中新增的自定义技能？",
+            parent=self,
+        ):
+            return
+        self.configuration = self.feature.default_configuration()
+        self.custom_conditions = {}
+        self.enabled_vars.clear()
+        self.value_vars.clear()
+        self.current_value_vars.clear()
+        self.description_vars.clear()
+        self._initialize_variables()
+        self._refresh_group_list()
+        self._render_group()
+        self._update_summary()
+        self._request_details()
 
     def _save(self):
         configuration = self._collect()
@@ -598,7 +1110,7 @@ class DbToolApp(tk.Tk):
         self.connection_var = tk.StringVar(value="尚未连接")
         self.selected: dict[str, tk.BooleanVar] = {f.id: tk.BooleanVar(value=False) for f in FEATURES}
         self.work_queue: queue.Queue[tuple[str, object]] = queue.Queue()
-        self.skill_detail_callbacks: dict[tuple[str, str], list[Callable]] = {}
+        self.skill_detail_callbacks: dict[tuple[str, str, str], list[Callable]] = {}
         self.skill_navigation_states: dict[str, dict] = {}
         self.active_skill_feature_id: str | None = None
         self.current_skill_view: SkillConfigView | None = None
@@ -977,15 +1489,22 @@ class DbToolApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("标记失败", str(exc), parent=self)
 
-    def request_skill_details(self, feature: Feature, callback: Callable) -> None:
-        key = (self.profile.target_label, feature.id)
+    def request_skill_details(
+        self, feature: Feature, callback: Callable, configuration=None
+    ) -> None:
+        normalized = feature.normalize_configuration(configuration)
+        key = (
+            self.profile.target_label,
+            feature.id,
+            feature.effective_version(normalized),
+        )
         callbacks = self.skill_detail_callbacks.setdefault(key, [])
         callbacks.append(callback)
         if len(callbacks) > 1:
             return
         threading.Thread(
             target=self._skill_detail_worker,
-            args=(replace(self.profile), feature, key),
+            args=(replace(self.profile), feature, copy.deepcopy(normalized), key),
             daemon=True,
         ).start()
 
@@ -999,9 +1518,11 @@ class DbToolApp(tk.Tk):
             # The user may have left the skill page while the DB query was running.
             pass
 
-    def _skill_detail_worker(self, profile: DatabaseProfile, feature: Feature, key):
+    def _skill_detail_worker(
+        self, profile: DatabaseProfile, feature: Feature, configuration, key
+    ):
         try:
-            details = load_skill_details(profile, feature)
+            details = load_skill_details(profile, feature, configuration)
             self.work_queue.put(
                 ("skill_details", (key, details.descriptions, details.current_values, ""))
             )

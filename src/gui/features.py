@@ -4,10 +4,43 @@ import hashlib
 import importlib
 import inspect
 import json
+import re
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Any
+
+
+CUSTOM_SKILL_CONDITIONS_KEY = "__custom_skill_conditions__"
+
+_INTEGER_SKILL_FUNCTIONS = {
+    "mod_gcd_time",
+    "mod_trigger_time",
+    "mod_cooldown_time",
+}
+_TEXT_SKILL_FUNCTIONS = {
+    "mod_duration",
+    "mod_cast_time",
+}
+_UNSAFE_CONDITION_PATTERN = re.compile(
+    r"(;|--|#|/\*|\*/|\b(?:select|union|insert|update|delete|replace|drop|alter|"
+    r"create|truncate|grant|revoke|call|load_file|outfile|dumpfile|sleep|benchmark)\b)",
+    re.IGNORECASE,
+)
+
+
+def validate_skill_condition(condition: Any) -> str:
+    """Validate a user-defined WHERE predicate before it reaches SELECT/UPDATE SQL."""
+    value = str(condition or "").strip()
+    if not value:
+        raise ValueError("技能查询条件不能为空。")
+    if len(value) > 2000:
+        raise ValueError("技能查询条件不能超过 2000 个字符。")
+    if _UNSAFE_CONDITION_PATTERN.search(value):
+        raise ValueError(
+            "技能查询条件只能填写 WHERE 后面的判断表达式，不能包含分号、注释、子查询或修改数据库的关键字。"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -69,10 +102,86 @@ class Feature:
             for group in self.config_groups
         }
 
-    def normalize_configuration(self, configuration: Any = None) -> dict[str, dict[str, dict[str, Any]]]:
+    def custom_skill_conditions(
+        self, configuration: Any = None, *, validate: bool = False
+    ) -> dict[str, str]:
+        source = configuration if isinstance(configuration, dict) else {}
+        raw_conditions = source.get(CUSTOM_SKILL_CONDITIONS_KEY, {})
+        if not isinstance(raw_conditions, dict):
+            return {}
+        conditions: dict[str, str] = {}
+        for raw_skill, raw_condition in raw_conditions.items():
+            skill = str(raw_skill or "").strip()
+            condition = str(raw_condition or "").strip()
+            if not skill or not condition:
+                continue
+            conditions[skill] = (
+                validate_skill_condition(condition) if validate else condition
+            )
+        if validate and conditions:
+            module = importlib.import_module(self.module)
+            collisions = [skill for skill in conditions if skill in module.cond]
+            if collisions:
+                raise ValueError(
+                    "以下自定义技能名称与代码 cond 定义重复："
+                    + "、".join(collisions)
+                )
+        return conditions
+
+    @staticmethod
+    def _convert_skill_value(
+        group: SkillConfigGroup,
+        skill: str,
+        raw: str,
+        default: Any = None,
+        *,
+        custom: bool = False,
+    ) -> Any:
+        if not raw:
+            raise ValueError(f"{group.title} / {skill}：修改值不能为空。")
+        try:
+            if custom:
+                if group.function in _INTEGER_SKILL_FUNCTIONS:
+                    return int(raw)
+                if group.function in _TEXT_SKILL_FUNCTIONS:
+                    return raw
+                return float(raw)
+            if isinstance(default, bool):
+                return raw.lower() in ("1", "true", "yes", "on")
+            if isinstance(default, int):
+                return int(raw)
+            if isinstance(default, float):
+                return float(raw)
+            return raw
+        except ValueError as exc:
+            expected = (
+                "整数"
+                if (custom and group.function in _INTEGER_SKILL_FUNCTIONS)
+                or isinstance(default, int)
+                else "数字"
+            )
+            raise ValueError(
+                f"{group.title} / {skill}：请输入有效的{expected}。"
+            ) from exc
+
+    def validate_custom_skill_value(
+        self, group_name: str, skill: str, raw_value: Any
+    ) -> None:
+        group = next(
+            (item for item in self.config_groups if item.config_name == group_name),
+            None,
+        )
+        if group is None:
+            raise ValueError("请选择有效的技能修改类型。")
+        self._convert_skill_value(
+            group, skill, str(raw_value or "").strip(), custom=True
+        )
+
+    def normalize_configuration(self, configuration: Any = None) -> dict[str, Any]:
         defaults = self.default_configuration()
         source = configuration if isinstance(configuration, dict) else {}
-        normalized: dict[str, dict[str, dict[str, Any]]] = {}
+        custom_conditions = self.custom_skill_conditions(source)
+        normalized: dict[str, Any] = {}
         for group in self.config_groups:
             saved_group = source.get(group.config_name, {})
             if not isinstance(saved_group, dict):
@@ -93,11 +202,39 @@ class Feature:
                     "enabled": enabled,
                     "value": str(value),
                 }
+            for skill, saved_item in saved_group.items():
+                if skill in normalized[group.config_name] or skill not in custom_conditions:
+                    continue
+                if isinstance(saved_item, dict):
+                    enabled = bool(saved_item.get("enabled", True))
+                    value = saved_item.get("value", "")
+                elif saved_item not in ({}, None):
+                    enabled = True
+                    value = saved_item
+                else:
+                    enabled = True
+                    value = ""
+                normalized[group.config_name][skill] = {
+                    "enabled": enabled,
+                    "value": str(value),
+                }
+        used_custom_skills = {
+            skill
+            for group in self.config_groups
+            for skill in normalized[group.config_name]
+            if skill in custom_conditions
+        }
+        normalized[CUSTOM_SKILL_CONDITIONS_KEY] = {
+            skill: custom_conditions[skill]
+            for skill in custom_conditions
+            if skill in used_custom_skills
+        }
         return normalized
 
     def configured_values(self, configuration: Any = None) -> dict[str, dict[str, Any]]:
         module = importlib.import_module(self.module)
         normalized = self.normalize_configuration(configuration)
+        custom_conditions = self.custom_skill_conditions(normalized, validate=True)
         result: dict[str, dict[str, Any]] = {}
         for group in self.config_groups:
             defaults = getattr(module, group.config_name)
@@ -106,32 +243,22 @@ class Feature:
                 if not item["enabled"]:
                     continue
                 raw = item["value"].strip()
-                if not raw:
-                    raise ValueError(f"{group.title} / {skill}：修改值不能为空。")
-                default = defaults[skill]
-                try:
-                    if isinstance(default, bool):
-                        value = raw.lower() in ("1", "true", "yes", "on")
-                    elif isinstance(default, int):
-                        value = int(raw)
-                    elif isinstance(default, float):
-                        value = float(raw)
-                    else:
-                        value = raw
-                except ValueError as exc:
-                    expected = "整数" if isinstance(default, int) else "数字"
-                    raise ValueError(f"{group.title} / {skill}：请输入有效的{expected}。") from exc
+                custom = skill in custom_conditions
+                default = defaults.get(skill)
+                value = self._convert_skill_value(
+                    group, skill, raw, default, custom=custom
+                )
                 values[skill] = value
             result[group.config_name] = values
         return result
 
     def configuration_summary(self, configuration: Any = None) -> tuple[int, int]:
         normalized = self.normalize_configuration(configuration)
-        total = sum(len(items) for items in normalized.values())
+        total = sum(len(normalized[group.config_name]) for group in self.config_groups)
         enabled = sum(
             1
-            for items in normalized.values()
-            for item in items.values()
+            for group in self.config_groups
+            for item in normalized[group.config_name].values()
             if item["enabled"]
         )
         return enabled, total
@@ -148,7 +275,9 @@ class Feature:
         if self.action_kind == "spell_bundle":
             from src.customization.base import spell
 
-            mod = spell.Mod(instance, module.cond)
+            conditions = dict(module.cond)
+            conditions.update(self.custom_skill_conditions(configuration, validate=True))
+            mod = spell.Mod(instance, conditions)
             configured = self.configured_values(configuration)
             for group in self.config_groups:
                 values = configured[group.config_name]

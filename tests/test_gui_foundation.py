@@ -15,9 +15,16 @@ from src.core.mysql_core import Mysql
 from src.customization.base import spell
 from src.gui.app import DbToolApp, ProfilesDialog, SkillConfigView
 from src.gui.config import AppSettings, DatabaseProfile, load_settings, save_settings
-from src.gui.features import FEATURE_BY_ID, FEATURES
+from src.gui.features import (
+    CUSTOM_SKILL_CONDITIONS_KEY,
+    FEATURE_BY_ID,
+    FEATURES,
+    Feature,
+    SkillConfigGroup,
+    validate_skill_condition,
+)
 from src.gui.runner import run_feature
-from src.gui.skill_descriptions import load_skill_details, skill_names
+from src.gui.skill_descriptions import load_skill_details, preview_skill_condition, skill_names
 from src.gui.state import FeatureStateStore
 
 
@@ -123,6 +130,103 @@ class GuiFoundationTests(unittest.TestCase):
         mod.mod_duration.assert_not_called()
         mod.mod_talent.assert_not_called()
         mod.mod_trigger_chance.assert_not_called()
+
+    def test_custom_skill_configuration_is_normalized_and_typed(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        config = feature.default_configuration()
+        condition = "s.SpellName4='测试自定义技能' and s.ID=12345"
+        config[CUSTOM_SKILL_CONDITIONS_KEY] = {"测试自定义技能": condition}
+        config["mod_gcd_time_skills"]["测试自定义技能"] = {
+            "enabled": True,
+            "value": "250",
+        }
+        config["mod_duration_skills"]["测试自定义技能"] = {
+            "enabled": True,
+            "value": "30s",
+        }
+        config["mod_talent_skills"]["测试自定义技能"] = {
+            "enabled": True,
+            "value": "2.5",
+        }
+
+        normalized = feature.normalize_configuration(config)
+        values = feature.configured_values(normalized)
+
+        self.assertEqual(
+            normalized[CUSTOM_SKILL_CONDITIONS_KEY],
+            {"测试自定义技能": condition},
+        )
+        self.assertEqual(values["mod_gcd_time_skills"]["测试自定义技能"], 250)
+        self.assertEqual(values["mod_duration_skills"]["测试自定义技能"], "30s")
+        self.assertEqual(values["mod_talent_skills"]["测试自定义技能"], 2.5)
+        enabled, total = feature.configuration_summary(normalized)
+        self.assertEqual(total, sum(len(normalized[g.config_name]) for g in feature.config_groups))
+        self.assertGreaterEqual(enabled, 3)
+
+    def test_custom_skill_condition_rejects_unsafe_sql_and_code_name_collision(self):
+        self.assertEqual(
+            validate_skill_condition("s.SpellName4='测试技能' and s.ID=123"),
+            "s.SpellName4='测试技能' and s.ID=123",
+        )
+        for condition in (
+            "1=1; DROP TABLE spell",
+            "s.ID=1 -- comment",
+            "s.ID IN (SELECT ID FROM spell)",
+        ):
+            with self.subTest(condition=condition), self.assertRaises(ValueError):
+                validate_skill_condition(condition)
+
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        config = feature.default_configuration()
+        config[CUSTOM_SKILL_CONDITIONS_KEY] = {"传染": "s.ID=50842"}
+        with self.assertRaisesRegex(ValueError, "与代码 cond 定义重复"):
+            feature.configured_values(config)
+
+    def test_spell_bundle_executes_gui_defined_skill_condition(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        config = feature.default_configuration()
+        for group in config.values():
+            for item in group.values():
+                item["enabled"] = False
+        condition = "s.SpellName4='测试自定义技能' and s.ID=12345"
+        config[CUSTOM_SKILL_CONDITIONS_KEY] = {"测试自定义技能": condition}
+        config["mod_gcd_time_skills"]["测试自定义技能"] = {
+            "enabled": True,
+            "value": "250",
+        }
+        instance = Mock(name="mysql_instance")
+
+        with patch("src.customization.base.spell.Mod") as mod_class, patch("builtins.print"):
+            feature.execute(instance, config)
+
+        module = importlib.import_module(feature.module)
+        expected_conditions = dict(module.cond)
+        expected_conditions["测试自定义技能"] = condition
+        mod_class.assert_called_once_with(instance, expected_conditions)
+        mod_class.return_value.mod_gcd_time.assert_called_once_with(
+            {"测试自定义技能": 250}
+        )
+
+    def test_custom_skill_settings_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            custom = {
+                "class.dk.bundle": {
+                    "mod_gcd_time_skills": {
+                        "测试自定义技能": {"enabled": True, "value": "250"}
+                    },
+                    CUSTOM_SKILL_CONDITIONS_KEY: {
+                        "测试自定义技能": "s.SpellName4='测试自定义技能' and s.ID=12345"
+                    },
+                }
+            }
+            save_settings(
+                AppSettings(
+                    profiles=[DatabaseProfile("测试")], feature_configs=custom
+                ),
+                path,
+            )
+            self.assertEqual(load_settings(path).feature_configs, custom)
 
     def test_settings_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -263,8 +367,14 @@ class GuiFoundationTests(unittest.TestCase):
                 for widget in descendants(view)
                 if isinstance(widget, ttk.Button)
             }
-            for label in ("← 返回职业技能", "恢复代码默认值", "保存配置"):
+            for label in (
+                "← 返回职业技能",
+                "管理自定义技能",
+                "恢复代码默认值",
+                "保存配置",
+            ):
                 self.assertTrue(buttons[label].winfo_ismapped())
+                self.assertGreater(buttons[label].winfo_width(), 70)
                 right = buttons[label].winfo_rootx() - root.winfo_rootx() + buttons[label].winfo_width()
                 self.assertLessEqual(right, root.winfo_width())
 
@@ -503,6 +613,190 @@ class GuiFoundationTests(unittest.TestCase):
         self.assertEqual(cursor.execute.call_args_list[1].args[1], ("技能甲", "技能乙"))
         cursor.close.assert_called_once()
         connection.close.assert_called_once()
+
+    def test_custom_skill_details_use_saved_condition_and_return_current_value(self):
+        group = SkillConfigGroup(
+            "skills", "公共冷却时间", "mod_gcd_time", "毫秒"
+        )
+        feature = Feature(
+            id="test.custom.bundle",
+            title="测试职业",
+            category="职业技能",
+            description="",
+            module="tests.fake_custom_skill_module",
+            action_kind="spell_bundle",
+            config_groups=(group,),
+        )
+        module = SimpleNamespace(
+            cond={"代码技能": "s.ID=10"},
+            skills={"代码技能": 0},
+        )
+        condition = "s.SpellName4='自定义技能' and s.ID=20"
+        configuration = {
+            "skills": {
+                "代码技能": {"enabled": False, "value": "0"},
+                "自定义技能": {"enabled": True, "value": "250"},
+            },
+            CUSTOM_SKILL_CONDITIONS_KEY: {"自定义技能": condition},
+        }
+        row = {
+            "spell_id": 20,
+            "spell_name": "自定义技能",
+            "skill_description": "来自数据库的自定义技能描述",
+            "effect_1": 0,
+            "effect_2": 0,
+            "effect_3": 0,
+            "effect_base_points_1": 0,
+            "effect_base_points_2": 0,
+            "effect_base_points_3": 0,
+            "effect_amplitude_1": 0,
+            "effect_amplitude_2": 0,
+            "effect_amplitude_3": 0,
+            "effect_apply_aura_1": 0,
+            "effect_apply_aura_2": 0,
+            "effect_apply_aura_3": 0,
+            "effect_trigger_spell_1": 0,
+            "effect_trigger_spell_2": 0,
+            "effect_trigger_spell_3": 0,
+            "proc_chance": 0,
+            "proc_charges": 0,
+            "duration_index": 0,
+            "recovery_time": 0,
+            "category_recovery_time": 0,
+            "casting_time_index": 0,
+            "start_recovery_category": 133,
+            "start_recovery_time": 250,
+            "effect_misc_value_1": 0,
+            "skill_match_0": 0,
+            "skill_match_1": 1,
+        }
+        cursor = Mock()
+        cursor.fetchall.side_effect = [[row], []]
+        connection = Mock()
+        connection.cursor.return_value = cursor
+
+        with patch("importlib.import_module", return_value=module), patch(
+            "src.gui.skill_descriptions.mysql.connector.connect",
+            return_value=connection,
+        ):
+            details = load_skill_details(
+                DatabaseProfile("测试"), feature, configuration
+            )
+
+        self.assertIn(condition, cursor.execute.call_args_list[0].args[0])
+        self.assertEqual(
+            details.descriptions["自定义技能"],
+            "来自数据库的自定义技能描述",
+        )
+        self.assertEqual(details.current_values[("skills", "自定义技能")], "250ms")
+
+    def test_custom_skill_condition_preview_is_read_only(self):
+        cursor = Mock()
+        cursor.fetchone.return_value = {"match_count": 2}
+        cursor.fetchall.return_value = [
+            {"spell_id": 20, "spell_name": "技能甲", "spell_rank": "等级 2"},
+            {"spell_id": 10, "spell_name": "技能甲", "spell_rank": "等级 1"},
+        ]
+        connection = Mock()
+        connection.cursor.return_value = cursor
+        condition = "s.SpellName4='技能甲' and s.ID>0"
+
+        with patch(
+            "src.gui.skill_descriptions.mysql.connector.connect",
+            return_value=connection,
+        ):
+            preview = preview_skill_condition(DatabaseProfile("测试"), condition)
+
+        self.assertEqual(preview.count, 2)
+        self.assertEqual(len(preview.rows), 2)
+        sql = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
+        self.assertIn(f"WHERE ({condition})", sql)
+        self.assertNotRegex(sql.lower(), r"\b(update|delete|insert|replace)\b")
+        cursor.close.assert_called_once()
+        connection.close.assert_called_once()
+
+    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
+    def test_skill_columns_align_and_gui_custom_skill_is_collected(self):
+        root = tk.Tk()
+        root.geometry("830x604")
+        main = tk.Frame(root)
+        main.pack(fill="both", expand=True)
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        requests = []
+
+        def request_details(_feature, callback, configuration):
+            requests.append(copy.deepcopy(configuration))
+            descriptions = {
+                skill: f"{skill}描述"
+                for group in feature.config_groups
+                for skill in configuration[group.config_name]
+            }
+            current_values = {
+                (group.config_name, skill): "250ms"
+                for group in feature.config_groups
+                for skill in configuration[group.config_name]
+            }
+            callback(descriptions, current_values, "")
+
+        app = SimpleNamespace(
+            main=main,
+            settings=AppSettings(profiles=[DatabaseProfile("测试")]),
+            profile=DatabaseProfile("测试"),
+            request_skill_details=request_details,
+        )
+        try:
+            view = SkillConfigView(app, feature)
+            root.update()
+            group = feature.config_groups[0]
+            first_skill = next(iter(view.configuration[group.config_name]))
+            first_widgets = view.row_column_widgets[(group.config_name, first_skill)]
+            for column in (1, 2, 3, 4):
+                self.assertAlmostEqual(
+                    view.column_header_widgets[column].winfo_rootx(),
+                    first_widgets[column].winfo_rootx(),
+                    delta=1,
+                )
+
+            condition = "s.SpellName4='测试自定义技能' and s.ID=12345"
+            view.upsert_custom_skill(
+                None,
+                None,
+                group.config_name,
+                "测试自定义技能",
+                condition,
+                "250",
+                True,
+            )
+            root.update()
+            collected = view._collect()
+            self.assertEqual(
+                collected[CUSTOM_SKILL_CONDITIONS_KEY],
+                {"测试自定义技能": condition},
+            )
+            self.assertEqual(
+                collected[group.config_name]["测试自定义技能"],
+                {"enabled": True, "value": "250"},
+            )
+            self.assertEqual(
+                view.current_value_vars[(group.config_name, "测试自定义技能")].get(),
+                "250ms",
+            )
+            self.assertEqual(
+                view.description_vars["测试自定义技能"].get(),
+                "测试自定义技能描述",
+            )
+            self.assertIn("测试自定义技能", requests[-1][group.config_name])
+
+            view.remove_custom_skill(group.config_name, "测试自定义技能")
+            self.assertNotIn(
+                "测试自定义技能", view._collect()[group.config_name]
+            )
+            self.assertEqual(
+                view._collect()[CUSTOM_SKILL_CONDITIONS_KEY], {}
+            )
+            root.update()
+        finally:
+            root.destroy()
 
     def test_skill_details_map_each_modification_type_to_its_database_field(self):
         groups = (
