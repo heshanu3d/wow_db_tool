@@ -9,17 +9,13 @@ cd /usr1/test/code/wow/db_tool
 python main.py
 ```
 
-界面基于 Python 自带的 Tkinter，技能图标使用 Pillow 解码客户端 BLP 资源。安装依赖：
+界面基于 PyQt5，技能图标使用 Pillow 解码客户端 BLP 资源。安装依赖：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-如果系统缺少 Tkinter（Ubuntu/Debian），安装：
-
-```bash
-sudo apt install python3-tk
-```
+PyQt5 已由 `requirements.txt` 安装。Linux 无桌面环境执行自动化测试时，可设置 `QT_QPA_PLATFORM=offscreen`。
 
 ## GUI 能力
 
@@ -50,7 +46,7 @@ sudo apt install python3-tk
 ```text
 spell.ID -> spell.SpellIconID / ActiveIconID -> SpellIcon.dbc
 -> Interface/Icons/*.blp 或 Interface/Spellbook/*.blp
--> Pillow 解码 -> PNG 缓存 -> Tkinter UI
+-> Pillow 解码 -> PNG 缓存 -> PyQt5 UI
 ```
 
 首次使用时点击任一技能页面右上角的“图标资源”，配置同一套 WoW 3.3.5a 客户端资源：

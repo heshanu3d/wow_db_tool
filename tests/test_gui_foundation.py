@@ -5,12 +5,18 @@ import importlib
 import os
 import struct
 import tempfile
-import tkinter as tk
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from tkinter import ttk
 from unittest.mock import Mock, patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt5.QtCore import QPoint, QPointF, Qt
+from PyQt5.QtGui import QWheelEvent
+from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QWidget
+
+QT_APPLICATION = QApplication.instance() or QApplication([])
 
 from PIL import Image
 
@@ -49,12 +55,6 @@ from src.gui.spell_icons import (
     suggested_spell_icon_paths,
 )
 from src.gui.state import FeatureStateStore
-
-
-def descendants(widget):
-    for child in widget.winfo_children():
-        yield child
-        yield from descendants(child)
 
 
 class GuiFoundationTests(unittest.TestCase):
@@ -340,38 +340,6 @@ class GuiFoundationTests(unittest.TestCase):
             },
         )
 
-    def test_profile_save_keeps_dialog_layout_settings(self):
-        original_settings = AppSettings(
-            profiles=[DatabaseProfile("旧连接")],
-            window_geometry="1200x760",
-            feature_configs={"feature": {"group": {}}},
-            dialog_geometries={
-                CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "800x700+70+80"
-            },
-            spell_icon_dbc_path="/tmp/SpellIcon.dbc",
-            spell_icon_client_root="/tmp/wow-client",
-        )
-        app = SimpleNamespace(
-            settings=original_settings, apply_settings=Mock()
-        )
-        dialog = ProfilesDialog.__new__(ProfilesDialog)
-        dialog.app = app
-        dialog.profiles = [DatabaseProfile("新连接")]
-        dialog.form_profile_index = 0
-        dialog._commit_fields = Mock()
-        dialog.destroy = Mock()
-
-        dialog._save()
-
-        updated = app.apply_settings.call_args.args[0]
-        self.assertEqual(updated.window_geometry, "1200x760")
-        self.assertEqual(updated.feature_configs, original_settings.feature_configs)
-        self.assertEqual(
-            updated.dialog_geometries, original_settings.dialog_geometries
-        )
-        self.assertEqual(updated.spell_icon_dbc_path, "/tmp/SpellIcon.dbc")
-        self.assertEqual(updated.spell_icon_client_root, "/tmp/wow-client")
-        dialog.destroy.assert_called_once()
 
     def test_suggested_spell_icon_paths_prefers_bundled_assets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -528,465 +496,13 @@ class GuiFoundationTests(unittest.TestCase):
             "123",
         )
 
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_profiles_dialog_action_buttons_visible_at_minimum_size(self):
-        root = tk.Tk()
-        root.settings = AppSettings(profiles=[DatabaseProfile("测试连接")])
-        try:
-            dialog = ProfilesDialog(root)
-            dialog.geometry("720x520")
-            dialog.update()
 
-            buttons = {
-                widget.cget("text"): widget
-                for widget in descendants(dialog)
-                if isinstance(widget, ttk.Button)
-            }
-            for label in ("测试当前连接", "保存连接", "取消"):
-                button = buttons[label]
-                top = button.winfo_rooty() - dialog.winfo_rooty()
-                self.assertTrue(button.winfo_ismapped())
-                self.assertGreater(button.winfo_height(), 1)
-                self.assertLessEqual(top + button.winfo_height(), dialog.winfo_height())
-        finally:
-            root.destroy()
 
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_custom_skill_dialog_buttons_stay_visible_and_layout_is_saved(self):
-        root = tk.Tk()
-        feature = FEATURE_BY_ID["class.dk.bundle"]
-        save_geometry = Mock()
-        app = SimpleNamespace(
-            settings=AppSettings(
-                profiles=[DatabaseProfile("测试")],
-                dialog_geometries={
-                    CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "880x520+40+50",
-                    CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "740x700+60+70",
-                },
-            ),
-            profile=DatabaseProfile("测试"),
-            save_dialog_geometry=save_geometry,
-        )
-        view = tk.Frame(root)
-        view.app = app
-        view.feature = feature
-        view.active_group = feature.config_groups[0]
-        view.configuration = feature.default_configuration()
-        view.custom_conditions = {}
-        view.custom_skill_rows = Mock(return_value=[])
-        view.upsert_custom_skill = Mock()
-        view.remove_custom_skill = Mock()
-        view.pack()
-        manager = None
-        editor = None
-        try:
-            manager = CustomSkillsDialog(view)
-            manager.update()
-            self.assertEqual(manager.winfo_width(), 880)
-            manager.geometry("760x480+45+55")
-            manager.update()
 
-            manager_buttons = {
-                widget.cget("text"): widget
-                for widget in descendants(manager)
-                if isinstance(widget, ttk.Button)
-            }
-            for label in ("新增技能", "编辑", "删除", "关闭"):
-                button = manager_buttons[label]
-                bottom = button.winfo_rooty() - manager.winfo_rooty() + button.winfo_height()
-                self.assertTrue(button.winfo_ismapped())
-                self.assertLessEqual(bottom, manager.winfo_height())
 
-            editor = CustomSkillEditorDialog(manager)
-            editor.update()
-            self.assertEqual(editor.winfo_width(), 740)
-            editor.skill_var.set("测试自定义技能")
-            editor.template_var.set("技能名称 + 单个 ID")
-            editor._template_selected()
-            editor._apply_condition_template()
-            self.assertEqual(
-                editor.condition_text.get("1.0", "end").strip(),
-                "s.SpellName4='测试自定义技能' and s.ID=0",
-            )
-            self.assertIn("名称和 ID", editor.template_help_var.get())
-            editor.geometry("680x680+65+75")
-            editor.preview_var.set("\n".join(f"查询结果 {index}" for index in range(30)))
-            editor._render_preview()
-            editor.update()
 
-            editor_buttons = {
-                widget.cget("text"): widget
-                for widget in descendants(editor)
-                if isinstance(widget, ttk.Button)
-            }
-            for label in ("测试查询", "保存并查询", "取消"):
-                button = editor_buttons[label]
-                bottom = button.winfo_rooty() - editor.winfo_rooty() + button.winfo_height()
-                self.assertTrue(button.winfo_ismapped())
-                self.assertLessEqual(bottom, editor.winfo_height())
 
-            editor._close()
-            editor = None
-            manager._close()
-            manager = None
-            calls = save_geometry.call_args_list
-            self.assertEqual(calls[0].args[0], CUSTOM_SKILL_EDITOR_GEOMETRY_KEY)
-            self.assertTrue(calls[0].args[1].startswith("680x680"))
-            self.assertEqual(calls[1].args[0], CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY)
-            self.assertTrue(calls[1].args[1].startswith("760x480"))
-        finally:
-            if editor is not None and editor.winfo_exists():
-                editor.destroy()
-            if manager is not None and manager.winfo_exists():
-                manager.destroy()
-            root.destroy()
 
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_double_click_custom_skill_opens_populated_editor(self):
-        root = tk.Tk()
-        feature = FEATURE_BY_ID["class.dk.bundle"]
-        group = feature.config_groups[0]
-        skill = "双击测试技能"
-        condition = "s.ID=12345"
-        configuration = feature.default_configuration()
-        configuration[group.config_name][skill] = {
-            "enabled": True,
-            "value": "321",
-        }
-        callback_errors = []
-        root.report_callback_exception = (
-            lambda error_type, error, traceback: callback_errors.append(error)
-        )
-        app = SimpleNamespace(
-            settings=AppSettings(profiles=[DatabaseProfile("测试")]),
-            profile=DatabaseProfile("测试"),
-            save_dialog_geometry=Mock(),
-        )
-        view = tk.Frame(root)
-        view.app = app
-        view.feature = feature
-        view.active_group = group
-        view.configuration = configuration
-        view.custom_conditions = {skill: condition}
-        view.custom_skill_rows = Mock(
-            return_value=[
-                (group.config_name, group.title, skill, True, "321", condition)
-            ]
-        )
-        view.upsert_custom_skill = Mock()
-        view.remove_custom_skill = Mock()
-        view.pack()
-        manager = None
-        editor = None
-        try:
-            manager = CustomSkillsDialog(view)
-            manager.update()
-            skill_label = next(
-                widget
-                for widget in descendants(manager)
-                if isinstance(widget, tk.Label) and widget.cget("text") == skill
-            )
-            for event_time in (1000, 1100):
-                skill_label.event_generate(
-                    "<ButtonPress-1>", x=2, y=2, time=event_time
-                )
-                skill_label.event_generate(
-                    "<ButtonRelease-1>", x=2, y=2, time=event_time + 10
-                )
-                root.update()
-
-            editors = [
-                widget
-                for widget in manager.winfo_children()
-                if isinstance(widget, CustomSkillEditorDialog)
-            ]
-            self.assertEqual(callback_errors, [])
-            self.assertEqual(len(editors), 1)
-            editor = editors[0]
-            self.assertTrue(editor.winfo_viewable())
-            self.assertEqual(editor.skill_var.get(), skill)
-            self.assertEqual(editor.value_var.get(), "321")
-            self.assertEqual(
-                editor.condition_text.get("1.0", "end").strip(), condition
-            )
-        finally:
-            if editor is not None and editor.winfo_exists():
-                editor.destroy()
-            if manager is not None and manager.winfo_exists():
-                manager.destroy()
-            root.destroy()
-
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_scroll_frame_accepts_linux_mouse_wheel_buttons_over_content(self):
-        root = tk.Tk()
-        root.geometry("360x240+20+20")
-        frame = ScrollFrame(root)
-        frame.pack(fill="both", expand=True)
-        labels = []
-        try:
-            for index in range(80):
-                label = tk.Label(frame.inner, text=f"滚动内容 {index}")
-                label.pack(anchor="w", pady=2)
-                labels.append(label)
-            root.update()
-            before = frame.canvas.yview()[0]
-            # Use a currently visible child; off-screen widgets do not have a
-            # screen coordinate that winfo_containing can resolve.
-            target = labels[2]
-            event = SimpleNamespace(
-                num=5, delta=0,
-                x_root=target.winfo_rootx() + 2,
-                y_root=target.winfo_rooty() + 2,
-            )
-            self.assertEqual(frame._mousewheel(event), "break")
-            root.update()
-            self.assertGreater(frame.canvas.yview()[0], before)
-
-            event.num = 4
-            self.assertEqual(frame._mousewheel(event), "break")
-            root.update()
-            self.assertLessEqual(frame.canvas.yview()[0], before)
-        finally:
-            root.destroy()
-
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_class_skill_cards_each_have_configuration_button(self):
-        settings = AppSettings(
-            profiles=[DatabaseProfile("测试")],
-            window_geometry="1040x680",
-        )
-        with patch("src.gui.app.load_settings", return_value=settings), patch(
-            "src.gui.app.save_settings"
-        ), patch.object(DbToolApp, "refresh_state", lambda self: None):
-            app = DbToolApp()
-            try:
-                app.category = "职业技能"
-                app.show_features()
-                app.update()
-                labels = [
-                    widget.cget("text")
-                    for widget in descendants(app.cards_frame.inner)
-                    if isinstance(widget, tk.Label)
-                ]
-                buttons = [
-                    widget
-                    for widget in descendants(app.cards_frame.inner)
-                    if isinstance(widget, ttk.Button) and widget.cget("text") == "配置技能"
-                ]
-                self.assertEqual(len(buttons), 4)
-                for class_name in ("死亡骑士", "牧师", "盗贼", "萨满祭司"):
-                    self.assertIn(class_name, labels)
-                self.assertTrue(all(button.winfo_ismapped() for button in buttons))
-            finally:
-                for callback_id in app.tk.call("after", "info"):
-                    app.after_cancel(callback_id)
-                app.destroy()
-
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_class_skill_configuration_view_at_minimum_main_size(self):
-        root = tk.Tk()
-        root.geometry("830x604")  # 1040x680 app minus sidebar/top bar
-        main = tk.Frame(root)
-        main.pack(fill="both", expand=True)
-        feature = FEATURE_BY_ID["class.shaman.bundle"]
-        descriptions = {
-            skill: f"{skill}的数据库技能描述"
-            for skill in skill_names(feature)
-        }
-        current_values = {
-            (group_name, skill): "1.5s"
-            for group_name, skills in feature.default_configuration().items()
-            for skill in skills
-        }
-        app = SimpleNamespace(
-            main=main,
-            settings=AppSettings(profiles=[DatabaseProfile("测试")]),
-            profile=DatabaseProfile("测试"),
-            category="",
-            show_features=Mock(),
-            save_feature_configuration=Mock(),
-            request_skill_details=lambda _feature, callback: callback(
-                descriptions, current_values, ""
-            ),
-        )
-        try:
-            view = SkillConfigView(app, feature)
-            root.update()
-
-            self.assertEqual(view.group_list.size(), len(feature.config_groups))
-            last_bbox = view.group_list.bbox(view.group_list.size() - 1)
-            self.assertIsNotNone(last_bbox)
-            self.assertLessEqual(last_bbox[1] + last_bbox[3], view.group_list.winfo_height())
-
-            buttons = {
-                widget.cget("text"): widget
-                for widget in descendants(view)
-                if isinstance(widget, ttk.Button)
-            }
-            for label in (
-                "← 返回职业技能",
-                "管理自定义技能",
-                "恢复代码默认值",
-                "保存配置",
-            ):
-                self.assertTrue(buttons[label].winfo_ismapped())
-                self.assertGreater(buttons[label].winfo_width(), 70)
-                right = buttons[label].winfo_rootx() - root.winfo_rootx() + buttons[label].winfo_width()
-                self.assertLessEqual(right, root.winfo_width())
-
-            first_group = feature.config_groups[0]
-            entries = [widget for widget in descendants(view) if isinstance(widget, ttk.Entry)]
-            checks = [widget for widget in descendants(view) if isinstance(widget, tk.Checkbutton)]
-            self.assertEqual(len(entries), len(view.configuration[first_group.config_name]))
-            self.assertEqual(len(checks), len(view.configuration[first_group.config_name]))
-            self.assertTrue(all(entry.winfo_height() > 1 for entry in entries))
-
-            labels = [widget for widget in descendants(view) if isinstance(widget, tk.Label)]
-            self.assertTrue(any(label.cget("text") == "当前值" for label in labels))
-            self.assertTrue(any(label.cget("text") == "技能描述" for label in labels))
-            skill_labels = [label for label in labels if label.cget("text") in descriptions]
-            self.assertTrue(skill_labels)
-            self.assertTrue(all(int(label.cget("width")) <= 10 for label in skill_labels))
-
-            first_skill = next(iter(view.configuration[first_group.config_name]))
-            first_key = (first_group.config_name, first_skill)
-            self.assertEqual(view.current_value_vars[first_key].get(), current_values[first_key])
-            self.assertEqual(view.description_vars[first_skill].get(), descriptions[first_skill])
-            current_label = next(
-                label
-                for label in labels
-                if label.cget("text") == current_values[first_key]
-                and int(label.cget("width")) == 17
-            )
-            current_right = (
-                current_label.winfo_rootx() - root.winfo_rootx()
-                + current_label.winfo_width()
-            )
-            self.assertTrue(current_label.winfo_ismapped())
-            self.assertLessEqual(current_right, root.winfo_width())
-            description_label = next(
-                label
-                for label in labels
-                if label.cget("text") == descriptions[first_skill]
-            )
-            description_right = (
-                description_label.winfo_rootx() - root.winfo_rootx()
-                + description_label.winfo_width()
-            )
-            self.assertTrue(description_label.winfo_ismapped())
-            self.assertLessEqual(description_right, root.winfo_width())
-            first_entry = entries[0]
-            self.assertEqual(
-                first_entry.get(),
-                view.configuration[first_group.config_name][first_skill]["value"],
-            )
-            first_entry.delete(0, "end")
-            first_entry.insert(0, "3.25")
-            self.assertEqual(view.value_vars[(first_group.config_name, first_skill)].get(), "3.25")
-
-            view.group_list.selection_clear(0, "end")
-            view.group_list.selection_set(view.group_list.size() - 1)
-            view._group_selected()
-            root.update()
-            last_group = feature.config_groups[-1]
-            entries = [widget for widget in descendants(view) if isinstance(widget, ttk.Entry)]
-            checks = [widget for widget in descendants(view) if isinstance(widget, tk.Checkbutton)]
-            self.assertEqual(len(entries), len(view.configuration[last_group.config_name]))
-            self.assertEqual(len(checks), len(view.configuration[last_group.config_name]))
-        finally:
-            root.destroy()
-
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_skill_groups_keep_independent_scroll_positions(self):
-        root = tk.Tk()
-        root.geometry("830x604")
-        main = tk.Frame(root)
-        main.pack(fill="both", expand=True)
-        feature = FEATURE_BY_ID["class.dk.bundle"]
-        app = SimpleNamespace(
-            main=main,
-            settings=AppSettings(profiles=[DatabaseProfile("测试")]),
-            profile=DatabaseProfile("测试"),
-            request_skill_details=lambda _feature, callback: callback({}, {}, ""),
-        )
-        try:
-            view = SkillConfigView(app, feature)
-            root.update()
-
-            view.detail.canvas.yview_moveto(1.0)
-            root.update()
-            gcd_position = view.detail.canvas.yview()[0]
-            self.assertGreater(gcd_position, 0.0)
-
-            view.group_list.selection_clear(0, "end")
-            view.group_list.selection_set(1)
-            view._group_selected()
-            root.update()
-            self.assertAlmostEqual(view.detail.canvas.yview()[0], 0.0, places=3)
-
-            view.group_list.selection_clear(0, "end")
-            view.group_list.selection_set(0)
-            view._group_selected()
-            root.update()
-            self.assertAlmostEqual(
-                view.detail.canvas.yview()[0], gcd_position, delta=0.02
-            )
-        finally:
-            root.destroy()
-
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_class_skill_editor_is_restored_after_visiting_history(self):
-        settings = AppSettings(
-            profiles=[DatabaseProfile("测试")],
-            window_geometry="1040x680",
-        )
-        feature = FEATURE_BY_ID["class.dk.bundle"]
-        with patch("src.gui.app.load_settings", return_value=settings), patch(
-            "src.gui.app.save_settings"
-        ), patch.object(DbToolApp, "refresh_state", lambda self: None), patch.object(
-            DbToolApp,
-            "request_skill_details",
-            lambda self, _feature, callback: callback({}, {}, ""),
-        ), patch.object(FeatureStateStore, "history", return_value=[]):
-            app = DbToolApp()
-            try:
-                app.show_skill_configuration(feature)
-                app.update()
-                original_view = app.current_skill_view
-                self.assertIsNotNone(original_view)
-
-                group = feature.config_groups[1]
-                skill = next(iter(original_view.configuration[group.config_name]))
-                original_view.value_vars[(group.config_name, skill)].set("123s")
-                original_view.group_list.selection_clear(0, "end")
-                original_view.group_list.selection_set(1)
-                original_view._group_selected()
-                app.update()
-
-                app.show_history()
-                app.update()
-                self.assertIsNone(app.current_skill_view)
-
-                app._set_category("职业技能")
-                app.update()
-                restored_view = app.current_skill_view
-                self.assertIsNotNone(restored_view)
-                self.assertEqual(restored_view.feature.id, feature.id)
-                self.assertEqual(restored_view.active_group.config_name, group.config_name)
-                self.assertEqual(
-                    restored_view.value_vars[(group.config_name, skill)].get(),
-                    "123s",
-                )
-
-                restored_view._back()
-                app.update()
-                self.assertIsNone(app.active_skill_feature_id)
-                self.assertIsNone(app.current_skill_view)
-                self.assertTrue(app.cards_frame.winfo_exists())
-            finally:
-                for callback_id in app.tk.call("after", "info"):
-                    app.after_cancel(callback_id)
-                app.destroy()
 
     def test_skill_details_use_conditions_and_display_name_fallback(self):
         group = SimpleNamespace(config_name="mod_gcd_time_skills", function="mod_gcd_time")
@@ -1175,204 +691,7 @@ class GuiFoundationTests(unittest.TestCase):
         cursor.close.assert_called_once()
         connection.close.assert_called_once()
 
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_skill_columns_align_and_gui_custom_skill_is_collected(self):
-        root = tk.Tk()
-        root.geometry("830x604")
-        main = tk.Frame(root)
-        main.pack(fill="both", expand=True)
-        feature = FEATURE_BY_ID["class.dk.bundle"]
-        requests = []
 
-        def request_details(_feature, callback, configuration):
-            requests.append(copy.deepcopy(configuration))
-            descriptions = {
-                skill: f"{skill}描述"
-                for group in feature.config_groups
-                for skill in configuration[group.config_name]
-            }
-            current_values = {
-                (group.config_name, skill): "250ms"
-                for group in feature.config_groups
-                for skill in configuration[group.config_name]
-            }
-            callback(descriptions, current_values, "")
-
-        app = SimpleNamespace(
-            main=main,
-            settings=AppSettings(profiles=[DatabaseProfile("测试")]),
-            profile=DatabaseProfile("测试"),
-            request_skill_details=request_details,
-        )
-        try:
-            view = SkillConfigView(app, feature)
-            root.update()
-            group = feature.config_groups[0]
-            first_skill = next(iter(view.configuration[group.config_name]))
-            first_widgets = view.row_column_widgets[(group.config_name, first_skill)]
-            self.assertEqual(
-                tuple(
-                    view.column_header_widgets[column].cget("text")
-                    for column in range(6)
-                ),
-                ("启用", "图标", "技能", "修改值", "当前值", "技能描述"),
-            )
-            for column in range(6):
-                self.assertAlmostEqual(
-                    view.column_header_widgets[column].winfo_rootx(),
-                    first_widgets[column].winfo_rootx(),
-                    delta=1,
-                )
-
-            condition = "s.SpellName4='测试自定义技能' and s.ID=12345"
-            view.upsert_custom_skill(
-                None,
-                None,
-                group.config_name,
-                "测试自定义技能",
-                condition,
-                "250",
-                True,
-            )
-            root.update()
-            collected = view._collect()
-            self.assertEqual(
-                collected[CUSTOM_SKILL_CONDITIONS_KEY],
-                {"测试自定义技能": condition},
-            )
-            self.assertEqual(
-                collected[group.config_name]["测试自定义技能"],
-                {"enabled": True, "value": "250"},
-            )
-            self.assertEqual(
-                view.current_value_vars[(group.config_name, "测试自定义技能")].get(),
-                "250ms",
-            )
-            self.assertEqual(
-                view.description_vars["测试自定义技能"].get(),
-                "测试自定义技能描述",
-            )
-            self.assertIn("测试自定义技能", requests[-1][group.config_name])
-
-            view.remove_custom_skill(group.config_name, "测试自定义技能")
-            self.assertNotIn(
-                "测试自定义技能", view._collect()[group.config_name]
-            )
-            self.assertEqual(
-                view._collect()[CUSTOM_SKILL_CONDITIONS_KEY], {}
-            )
-            root.update()
-        finally:
-            root.destroy()
-
-    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
-    def test_cached_icons_appear_in_skill_and_custom_skill_views(self):
-        root = tk.Tk()
-        root.geometry("980x680")
-        main = tk.Frame(root)
-        main.pack(fill="both", expand=True)
-        feature = FEATURE_BY_ID["class.dk.bundle"]
-        with tempfile.TemporaryDirectory() as directory:
-            png = Path(directory) / "spell.png"
-            Image.new("RGBA", (48, 48), (28, 123, 120, 255)).save(png)
-
-            def request_details(_feature, callback, configuration=None):
-                configuration = configuration or feature.default_configuration()
-                descriptions = {
-                    skill: f"{skill}描述"
-                    for group in feature.config_groups
-                    for skill in configuration[group.config_name]
-                }
-                current_values = {
-                    (group.config_name, skill): "250ms"
-                    for group in feature.config_groups
-                    for skill in configuration[group.config_name]
-                }
-                callback(descriptions, current_values, "")
-
-            app = SimpleNamespace(
-                main=main,
-                settings=AppSettings(profiles=[DatabaseProfile("测试")]),
-                profile=DatabaseProfile("测试"),
-                request_skill_details=request_details,
-                cached_skill_icons=lambda _feature, _configuration: {
-                    "传染": png,
-                    "测试自定义技能": png,
-                },
-                save_dialog_geometry=Mock(),
-            )
-            manager = None
-            try:
-                view = SkillConfigView(app, feature)
-                root.update()
-                group = feature.config_groups[0]
-                self.assertTrue(
-                    view.row_column_widgets[(group.config_name, "传染")][1].cget(
-                        "image"
-                    )
-                )
-
-                listener = Mock()
-                view.add_icon_listener(listener)
-                view._icons_loaded(SpellIconSyncResult(dict(view.icon_paths)))
-                listener.assert_not_called()
-                view._icons_loaded(
-                    SpellIconSyncResult(
-                        {"测试自定义技能": png}, frozenset({"传染"})
-                    )
-                )
-                self.assertFalse(
-                    view.row_column_widgets[(group.config_name, "传染")][1].cget(
-                        "image"
-                    )
-                )
-                view._icons_loaded(
-                    SpellIconSyncResult(
-                        {"传染": png, "测试自定义技能": png},
-                        frozenset({"传染"}),
-                    )
-                )
-                self.assertEqual(listener.call_count, 2)
-
-                view.upsert_custom_skill(
-                    None,
-                    None,
-                    group.config_name,
-                    "测试自定义技能",
-                    "s.SpellName4='测试自定义技能' and s.ID=12345",
-                    "250",
-                    True,
-                )
-                manager = CustomSkillsDialog(view)
-                root.update()
-                headings = {
-                    label.cget("text"): label
-                    for label in descendants(manager)
-                    if isinstance(label, tk.Label)
-                    and label.cget("text")
-                    in {"修改类型", "图标", "技能定义", "启用", "修改值", "查询条件"}
-                }
-                ordered = tuple(
-                    text
-                    for text, _label in sorted(
-                        headings.items(), key=lambda item: item[1].winfo_rootx()
-                    )
-                )
-                self.assertEqual(
-                    ordered,
-                    ("修改类型", "图标", "技能定义", "启用", "修改值", "查询条件"),
-                )
-                self.assertTrue(
-                    any(
-                        label.cget("image")
-                        for label in descendants(manager)
-                        if isinstance(label, tk.Label)
-                    )
-                )
-            finally:
-                if manager is not None and manager.winfo_exists():
-                    manager.destroy()
-                root.destroy()
 
     def test_skill_details_map_each_modification_type_to_its_database_field(self):
         groups = (
@@ -1445,34 +764,6 @@ class GuiFoundationTests(unittest.TestCase):
         self.assertIn("spellduration", cursor.execute.call_args_list[2].args[0])
         self.assertIn("spellcasttimes", cursor.execute.call_args_list[3].args[0])
 
-    def test_existing_profile_edit_is_committed_to_displayed_profile(self):
-        dialog = ProfilesDialog.__new__(ProfilesDialog)
-        dialog.profiles = [
-            DatabaseProfile("连接 A", "host-a", 3306, "user-a", "pass-a", "db-a"),
-            DatabaseProfile("连接 B", "host-b", 3307, "user-b", "pass-b", "db-b"),
-        ]
-        # Simulate a delayed Listbox event changing `current` while the form is
-        # still displaying profile B. The edit must remain attached to B.
-        dialog.current = 0
-        dialog.form_profile_index = 1
-        values = {
-            "name": "连接 B（已修改）",
-            "host": "new-host",
-            "port": "4406",
-            "user": "new-user",
-            "password": "new-pass",
-            "database": "new-db",
-            "auth_plugin": "mysql_native_password",
-        }
-        dialog.vars = {key: Mock(get=Mock(return_value=value)) for key, value in values.items()}
-
-        dialog._commit_fields(validate=True)
-
-        self.assertEqual(dialog.profiles[0].host, "host-a")
-        self.assertEqual(dialog.profiles[1].name, "连接 B（已修改）")
-        self.assertEqual(dialog.profiles[1].host, "new-host")
-        self.assertEqual(dialog.profiles[1].port, 4406)
-        self.assertEqual(dialog.profiles[1].database, "new-db")
 
     def test_settings_round_trip_after_editing_existing_profile(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1517,6 +808,394 @@ class GuiFoundationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("功能尚未运行", result.error)
         mysql.assert_not_called()
+
+class PyQtGuiMigrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def tearDown(self):
+        for widget in list(QApplication.topLevelWidgets()):
+            widget.close()
+            widget.deleteLater()
+        QApplication.processEvents()
+
+    def _skill_app(self, feature, *, icons=None, settings=None):
+        settings = settings or AppSettings(profiles=[DatabaseProfile("测试")])
+        icons = dict(icons or {})
+
+        def request_details(_feature, callback, configuration=None):
+            configuration = _feature.normalize_configuration(configuration)
+            descriptions = {
+                skill: f"{skill}描述"
+                for group in _feature.config_groups
+                for skill in configuration[group.config_name]
+            }
+            current_values = {
+                (group.config_name, skill): f"{row + 1}ms"
+                for group in _feature.config_groups
+                for row, skill in enumerate(configuration[group.config_name])
+            }
+            callback(descriptions, current_values, "", SpellIconSyncResult(icons))
+
+        return SimpleNamespace(
+            settings=settings,
+            profile=settings.profiles[settings.selected_profile],
+            request_skill_details=request_details,
+            cached_skill_icons=lambda _feature, _configuration: dict(icons),
+            save_dialog_geometry=Mock(),
+            save_feature_configuration=Mock(),
+            show_skill_category_home=Mock(),
+        )
+
+    def test_profiles_dialog_has_visible_save_button_and_persists_edits(self):
+        parent = QWidget()
+        parent.settings = AppSettings(
+            profiles=[DatabaseProfile("连接 A", "host-a")],
+            window_geometry="1200x760",
+            dialog_geometries={CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "800x700+70+80"},
+            feature_configs={"feature": {"group": {}}},
+            spell_icon_dbc_path="/tmp/SpellIcon.dbc",
+            spell_icon_client_root="/tmp/wow-client",
+        )
+        parent.apply_settings = Mock()
+        dialog = ProfilesDialog(parent)
+        dialog.resize(dialog.minimumSize())
+        dialog.show()
+        QApplication.processEvents()
+
+        buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+        self.assertIn("保存连接", buttons)
+        self.assertTrue(buttons["保存连接"].isVisible())
+        self.assertGreater(buttons["保存连接"].height(), 1)
+
+        dialog.fields["name"].setText("连接 A（已修改）")
+        dialog.fields["host"].setText("new-host")
+        dialog.fields["port"].setText("4406")
+        dialog.fields["database"].setText("new-db")
+        dialog._save()
+
+        updated = parent.apply_settings.call_args.args[0]
+        self.assertEqual(updated.profiles[0].name, "连接 A（已修改）")
+        self.assertEqual(updated.profiles[0].host, "new-host")
+        self.assertEqual(updated.profiles[0].port, 4406)
+        self.assertEqual(updated.profiles[0].database, "new-db")
+        self.assertEqual(updated.window_geometry, "1200x760")
+        self.assertEqual(updated.dialog_geometries, parent.settings.dialog_geometries)
+        self.assertEqual(updated.feature_configs, parent.settings.feature_configs)
+
+    def test_existing_profile_edit_is_committed_to_displayed_profile(self):
+        parent = QWidget()
+        parent.settings = AppSettings(
+            profiles=[
+                DatabaseProfile("连接 A", "host-a"),
+                DatabaseProfile("连接 B", "host-b", 3307, "user-b", "pass-b", "db-b"),
+            ],
+            selected_profile=1,
+        )
+        parent.apply_settings = Mock()
+        dialog = ProfilesDialog(parent)
+        dialog.current = 0
+        dialog.form_profile_index = 1
+        values = {
+            "name": "连接 B（已修改）",
+            "host": "new-host",
+            "port": "4406",
+            "user": "new-user",
+            "password": "new-pass",
+            "database": "new-db",
+            "auth_plugin": "mysql_native_password",
+        }
+        for key, value in values.items():
+            dialog.fields[key].setText(value)
+
+        dialog._commit_fields(validate=True)
+
+        self.assertEqual(dialog.profiles[0].host, "host-a")
+        self.assertEqual(dialog.profiles[1].name, "连接 B（已修改）")
+        self.assertEqual(dialog.profiles[1].host, "new-host")
+        self.assertEqual(dialog.profiles[1].port, 4406)
+        self.assertEqual(dialog.profiles[1].database, "new-db")
+
+    def test_custom_skill_dialog_geometry_templates_and_buttons(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        settings = AppSettings(
+            profiles=[DatabaseProfile("测试")],
+            dialog_geometries={
+                CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "880x520+40+50",
+                CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "740x700+60+70",
+            },
+        )
+        view = SkillConfigView(self._skill_app(feature, settings=settings), feature)
+        manager = CustomSkillsDialog(view)
+        manager.show()
+        QApplication.processEvents()
+        self.assertEqual(manager.width(), 880)
+        manager_buttons = {button.text(): button for button in manager.findChildren(QPushButton)}
+        for label in ("新增技能", "编辑", "删除", "关闭"):
+            self.assertTrue(manager_buttons[label].isVisible())
+
+        editor = CustomSkillEditorDialog(manager)
+        editor.show()
+        QApplication.processEvents()
+        self.assertEqual(editor.width(), 740)
+        editor.skill_edit.setText("测试自定义技能")
+        editor.template_box.setCurrentText("技能名称 + 单个 ID")
+        editor._apply_condition_template()
+        self.assertEqual(
+            editor.condition_edit.toPlainText().strip(),
+            "s.SpellName4='测试自定义技能' and s.ID=0",
+        )
+        self.assertIn("名称和 ID", editor.template_help.text())
+        editor.resize(680, 680)
+        editor.move(65, 75)
+        editor.reject()
+        view.app.save_dialog_geometry.assert_any_call(
+            CUSTOM_SKILL_EDITOR_GEOMETRY_KEY, "680x680+65+75"
+        )
+        manager.resize(760, 480)
+        manager.move(45, 55)
+        manager.reject()
+        view.app.save_dialog_geometry.assert_any_call(
+            CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY, "760x480+45+55"
+        )
+
+    def test_double_click_custom_skill_opens_populated_editor(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        view = SkillConfigView(self._skill_app(feature), feature)
+        view.upsert_custom_skill(
+            None,
+            None,
+            group.config_name,
+            "测试自定义技能",
+            "s.SpellName4='测试自定义技能' and s.ID=12345",
+            "250",
+            True,
+        )
+        manager = CustomSkillsDialog(view)
+        manager.table.selectRow(0)
+
+        real_editor = CustomSkillEditorDialog(manager, group.config_name, "测试自定义技能")
+        self.assertEqual(real_editor.skill_edit.text(), "测试自定义技能")
+        self.assertEqual(real_editor.value_edit.text(), "250")
+        self.assertEqual(
+            real_editor.condition_edit.toPlainText(),
+            "s.SpellName4='测试自定义技能' and s.ID=12345",
+        )
+        real_editor.close()
+
+        with patch("src.gui.app.CustomSkillEditorDialog") as editor_class:
+            editor_class.return_value.exec_.return_value = 0
+            index = manager.table.model().index(0, 0)
+            manager.table.doubleClicked.emit(index)
+            QApplication.processEvents()
+            editor_class.assert_called_once_with(
+                manager, group.config_name, "测试自定义技能"
+            )
+
+    def test_scroll_frame_uses_native_qt_wheel_scrolling(self):
+        frame = ScrollFrame()
+        frame.resize(360, 240)
+        for index in range(80):
+            frame.add_widget(QLabel(f"滚动内容 {index}"))
+        frame.show()
+        QApplication.processEvents()
+        bar = frame.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        before = bar.value()
+        event = QWheelEvent(
+            QPointF(10, 10),
+            QPointF(10, 10),
+            QPoint(0, 0),
+            QPoint(0, -120),
+            Qt.NoButton,
+            Qt.NoModifier,
+            Qt.ScrollUpdate,
+            False,
+        )
+        QApplication.sendEvent(frame.viewport(), event)
+        QApplication.processEvents()
+        self.assertGreater(bar.value(), before)
+
+    def test_class_skill_cards_each_have_configuration_button(self):
+        settings = AppSettings(profiles=[DatabaseProfile("测试")])
+        with patch("src.gui.app.load_settings", return_value=settings), patch.object(
+            DbToolApp, "_refresh_worker"
+        ), patch("src.gui.app.save_settings"):
+            app = DbToolApp()
+            app.resize(1040, 680)
+            app._set_category("职业技能")
+            app.show()
+            QApplication.processEvents()
+            titles = {label.text() for label in app.findChildren(QLabel)}
+            self.assertTrue({"死亡骑士", "牧师", "盗贼", "萨满祭司"}.issubset(titles))
+            buttons = [
+                button for button in app.cards_frame.inner.findChildren(QPushButton)
+                if button.text() == "配置技能" and button.isVisible()
+            ]
+            self.assertEqual(len(buttons), 4)
+
+    def test_skill_configuration_headers_defaults_and_dynamic_details(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        view = SkillConfigView(self._skill_app(feature), feature)
+        view.resize(980, 680)
+        view.show()
+        QApplication.processEvents()
+        table = view.tables[group.config_name]
+        self.assertEqual(
+            tuple(table.horizontalHeaderItem(column).text() for column in range(table.columnCount())),
+            SkillConfigView.HEADERS,
+        )
+        self.assertLessEqual(table.columnWidth(2), 150)
+        first_skill = next(iter(view.configuration[group.config_name]))
+        key = (group.config_name, first_skill)
+        self.assertEqual(
+            view.value_widgets[key].text(),
+            feature.default_configuration()[group.config_name][first_skill]["value"],
+        )
+        view.value_widgets[key].setText("3.25")
+        self.assertEqual(view._collect()[group.config_name][first_skill]["value"], "3.25")
+        self.assertEqual(view.current_items[key].text(), "1ms")
+        self.assertEqual(view.description_items[first_skill][0].text(), f"{first_skill}描述")
+
+    def test_skill_groups_keep_independent_scroll_positions(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        view = SkillConfigView(self._skill_app(feature), feature)
+        view.resize(780, 360)
+        view.show()
+        QApplication.processEvents()
+        first = feature.config_groups[0]
+        second = feature.config_groups[1]
+        first_table = view.tables[first.config_name]
+        self.assertGreater(first_table.verticalScrollBar().maximum(), 0)
+        first_table.verticalScrollBar().setValue(first_table.verticalScrollBar().maximum())
+        first_value = first_table.verticalScrollBar().value()
+        view._activate_group(second.config_name)
+        QApplication.processEvents()
+        self.assertEqual(view.tables[second.config_name].verticalScrollBar().value(), 0)
+        view._activate_group(first.config_name)
+        QApplication.processEvents()
+        self.assertEqual(first_table.verticalScrollBar().value(), first_value)
+
+    def test_skill_editor_is_restored_after_visiting_history(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        skill = next(iter(feature.default_configuration()[group.config_name]))
+        settings = AppSettings(profiles=[DatabaseProfile("测试")])
+        with patch("src.gui.app.load_settings", return_value=settings), patch.object(
+            DbToolApp, "_refresh_worker"
+        ), patch("src.gui.app.save_settings"), patch.object(
+            FeatureStateStore, "history", return_value=[]
+        ):
+            app = DbToolApp()
+            detail_app = self._skill_app(feature, settings=settings)
+            app.request_skill_details = detail_app.request_skill_details
+            app.cached_skill_icons = detail_app.cached_skill_icons
+            app.show_skill_configuration(feature)
+            original = app.current_skill_view
+            original.value_widgets[(group.config_name, skill)].setText("123s")
+            original._activate_group(feature.config_groups[1].config_name)
+            app.show_history()
+            QApplication.processEvents()
+            app._set_category("职业技能")
+            QApplication.processEvents()
+            restored = app.current_skill_view
+            self.assertIsNotNone(restored)
+            self.assertEqual(restored.feature.id, feature.id)
+            self.assertEqual(
+                restored.value_widgets[(group.config_name, skill)].text(), "123s"
+            )
+            self.assertEqual(restored.active_group.config_name, feature.config_groups[1].config_name)
+
+    def test_skill_columns_align_and_custom_skill_is_collected(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        view = SkillConfigView(self._skill_app(feature), feature)
+        table = view.tables[group.config_name]
+        self.assertEqual(table.columnCount(), 6)
+        self.assertEqual(table.horizontalHeader().count(), table.columnCount())
+        view.upsert_custom_skill(
+            None,
+            None,
+            group.config_name,
+            "测试自定义技能",
+            "s.SpellName4='测试自定义技能' and s.ID=12345",
+            "250",
+            True,
+        )
+        collected = view._collect()
+        self.assertEqual(
+            collected[group.config_name]["测试自定义技能"],
+            {"enabled": True, "value": "250"},
+        )
+        self.assertEqual(
+            collected[CUSTOM_SKILL_CONDITIONS_KEY]["测试自定义技能"],
+            "s.SpellName4='测试自定义技能' and s.ID=12345",
+        )
+        key = (group.config_name, "测试自定义技能")
+        self.assertEqual(view.current_items[key].text(), f"{len(view.configuration[group.config_name])}ms")
+        self.assertEqual(view.description_items["测试自定义技能"][0].text(), "测试自定义技能描述")
+
+    def test_cached_icons_appear_in_skill_and_custom_skill_views(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        with tempfile.TemporaryDirectory() as directory:
+            png = Path(directory) / "icon.png"
+            Image.new("RGBA", (8, 8), (30, 120, 210, 255)).save(png)
+            app = self._skill_app(feature, icons={"传染": png, "测试自定义技能": png})
+            view = SkillConfigView(app, feature)
+            row = list(view.configuration[group.config_name]).index("传染")
+            self.assertFalse(view.tables[group.config_name].item(row, 1).icon().isNull())
+
+            listener = Mock()
+            view.add_icon_listener(listener)
+            view._details_loaded({}, {}, "", SpellIconSyncResult(dict(view.icon_paths)))
+            listener.assert_not_called()
+            view._details_loaded(
+                {}, {}, "", SpellIconSyncResult({"测试自定义技能": png}, frozenset({"传染"}))
+            )
+            self.assertTrue(view.tables[group.config_name].item(row, 1).icon().isNull())
+            view._details_loaded(
+                {}, {}, "", SpellIconSyncResult(
+                    {"传染": png, "测试自定义技能": png}, frozenset({"传染"})
+                )
+            )
+            self.assertEqual(listener.call_count, 2)
+
+            view.upsert_custom_skill(
+                None,
+                None,
+                group.config_name,
+                "测试自定义技能",
+                "s.SpellName4='测试自定义技能' and s.ID=12345",
+                "250",
+                True,
+            )
+            manager = CustomSkillsDialog(view)
+            headers = tuple(
+                manager.table.horizontalHeaderItem(column).text()
+                for column in range(manager.table.columnCount())
+            )
+            self.assertEqual(
+                headers,
+                ("修改类型", "图标", "技能定义", "启用", "修改值", "查询条件"),
+            )
+            self.assertFalse(manager.table.item(0, 1).icon().isNull())
+
+    def test_restore_defaults_does_not_reapply_stale_widget_values(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        skill = next(iter(feature.default_configuration()[group.config_name]))
+        view = SkillConfigView(self._skill_app(feature), feature)
+        view.value_widgets[(group.config_name, skill)].setText("999")
+        with patch("src.gui.app._confirm", return_value=True):
+            view._reset_defaults()
+        self.assertEqual(
+            view.value_widgets[(group.config_name, skill)].text(),
+            feature.default_configuration()[group.config_name][skill]["value"],
+        )
 
 
 if __name__ == "__main__":
