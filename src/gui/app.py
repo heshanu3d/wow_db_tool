@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import copy
 import importlib
+import inspect
 import queue
 import threading
 import tkinter as tk
 from dataclasses import replace
-from tkinter import messagebox, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 from typing import Callable
+
+from PIL import Image, ImageTk
 
 from .config import AppSettings, DatabaseProfile, load_settings, save_settings
 from .features import (
@@ -22,6 +26,12 @@ from .features import (
 )
 from .runner import RunResult, run_feature
 from .skill_descriptions import load_skill_details, preview_skill_condition
+from .spell_icons import (
+    SpellIconCache,
+    SpellIconSyncResult,
+    load_spell_icon_dbc,
+    suggested_spell_icon_paths,
+)
 from .state import FeatureRun, FeatureStateStore
 
 COLORS = {
@@ -42,9 +52,20 @@ COLORS = {
     "slate_soft": "#E9EDF2",
 }
 
-SKILL_COLUMN_MIN_SIZES = (48, 92, 150, 126, 60)
+SKILL_COLUMN_MIN_SIZES = (48, 48, 92, 150, 126, 60)
 CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY = "custom_skills_manager"
 CUSTOM_SKILL_EDITOR_GEOMETRY_KEY = "custom_skill_editor"
+
+
+def _load_tk_icon(path: str | Path, size: int = 34):
+    """Load one cached PNG as a Tk image; malformed cache files stay non-fatal."""
+    try:
+        with Image.open(path) as image:
+            converted = image.convert("RGBA")
+            converted.thumbnail((size, size), Image.Resampling.LANCZOS)
+            return ImageTk.PhotoImage(converted)
+    except (OSError, ValueError, tk.TclError):
+        return None
 
 
 def _restore_dialog_geometry(
@@ -80,14 +101,76 @@ class ScrollFrame(tk.Frame):
         self.scrollbar.pack(side="right", fill="y")
         self.inner.bind("<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.window_id, width=e.width))
-        # Windows/macOS report MouseWheel; X11/Linux reports wheel buttons 4/5.
-        # bind_all keeps scrolling active while the pointer is over labels,
-        # checkboxes or entries inside the canvas rather than only the canvas itself.
-        self.bind_all("<MouseWheel>", self._mousewheel)
-        self.bind_all("<Button-4>", self._mousewheel)
-        self.bind_all("<Button-5>", self._mousewheel)
+        self._register_mousewheel_dispatcher()
+
+    def _register_mousewheel_dispatcher(self):
+        # One root-level dispatcher supports nested dialogs without allowing a
+        # newly-created ScrollFrame to overwrite an older page's wheel binding.
+        root = self._root()
+        registry = getattr(root, "_db_tool_scroll_frames", None)
+        if registry is None:
+            registry = []
+            root._db_tool_scroll_frames = registry
+            root.bind_all(
+                "<MouseWheel>",
+                lambda event, owner=root: ScrollFrame._dispatch_mousewheel(owner, event),
+            )
+            root.bind_all(
+                "<Button-4>",
+                lambda event, owner=root: ScrollFrame._dispatch_mousewheel(owner, event),
+            )
+            root.bind_all(
+                "<Button-5>",
+                lambda event, owner=root: ScrollFrame._dispatch_mousewheel(owner, event),
+            )
+        registry.append(self)
+
+    @staticmethod
+    def _dispatch_mousewheel(root, event):
+        registry = getattr(root, "_db_tool_scroll_frames", [])
+        live = []
+        for frame in registry:
+            try:
+                if frame.winfo_exists():
+                    live.append(frame)
+            except tk.TclError:
+                pass
+        root._db_tool_scroll_frames = live
+        try:
+            current = root.winfo_containing(event.x_root, event.y_root)
+        except tk.TclError:
+            return None
+        live_set = set(live)
+        while current is not None:
+            if current in live_set:
+                return current._scroll_event(event)
+            current = getattr(current, "master", None)
+        return None
+
+    @staticmethod
+    def _wheel_units(event):
+        if getattr(event, "num", None) == 4:
+            return -1
+        if getattr(event, "num", None) == 5:
+            return 1
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return None
+        units = int(-delta / 120)
+        return units or (-1 if delta > 0 else 1)
+
+    def _scroll_event(self, event):
+        units = self._wheel_units(event)
+        if units is None:
+            return None
+        try:
+            self.canvas.yview_scroll(units, "units")
+            return "break"
+        except tk.TclError:
+            return None
 
     def _mousewheel(self, event):
+        """Direct handler retained for tests and programmatic wheel forwarding."""
         try:
             if not self.winfo_exists():
                 return None
@@ -97,19 +180,7 @@ class ScrollFrame(tk.Frame):
                 current = getattr(current, "master", None)
             if current is not self:
                 return None
-            if getattr(event, "num", None) == 4:
-                units = -1
-            elif getattr(event, "num", None) == 5:
-                units = 1
-            else:
-                delta = getattr(event, "delta", 0)
-                if not delta:
-                    return None
-                units = int(-delta / 120)
-                if units == 0:
-                    units = -1 if delta > 0 else 1
-            self.canvas.yview_scroll(units, "units")
-            return "break"
+            return self._scroll_event(event)
         except tk.TclError:
             return None
 
@@ -268,6 +339,8 @@ class ProfilesDialog(tk.Toplevel):
                 window_geometry=self.app.settings.window_geometry,
                 dialog_geometries=copy.deepcopy(self.app.settings.dialog_geometries),
                 feature_configs=copy.deepcopy(self.app.settings.feature_configs),
+                spell_icon_dbc_path=self.app.settings.spell_icon_dbc_path,
+                spell_icon_client_root=self.app.settings.spell_icon_client_root,
             )
             # Persist first. The dialog remains open and reports an actionable
             # error if the file cannot be written; it is no longer closed after
@@ -275,6 +348,110 @@ class ProfilesDialog(tk.Toplevel):
             self.app.apply_settings(updated)
         except (OSError, ValueError, TypeError) as exc:
             messagebox.showerror("保存连接失败", str(exc), parent=self)
+            return
+        self.destroy()
+
+
+class IconResourcesDialog(tk.Toplevel):
+    """Configure extracted WoW client resources used to render spell icons."""
+
+    def __init__(self, app: "DbToolApp", parent=None):
+        super().__init__(parent or app)
+        self.app = app
+        self.title("技能图标资源")
+        self.geometry("760x330")
+        self.minsize(680, 300)
+        self.configure(bg=COLORS["paper"])
+        self.transient(parent or app)
+        self.grab_set()
+        suggested_dbc, suggested_root = suggested_spell_icon_paths()
+        self.dbc_var = tk.StringVar(
+            self, value=app.settings.spell_icon_dbc_path or suggested_dbc
+        )
+        self.root_var = tk.StringVar(
+            self, value=app.settings.spell_icon_client_root or suggested_root
+        )
+        self._build()
+
+    def _build(self):
+        content = tk.Frame(self, bg=COLORS["paper"])
+        content.pack(fill="both", expand=True, padx=24, pady=20)
+        tk.Label(
+            content, text="技能图标资源", bg=COLORS["paper"], fg=COLORS["ink"],
+            font=("Noto Sans CJK SC", 17, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            content,
+            text="需要从 WoW 3.3.5a 客户端解压 SpellIcon.dbc 和 Interface/Icons/*.blp。图标会转换成 PNG 并缓存在项目目录中。",
+            bg=COLORS["paper"], fg=COLORS["muted"], justify="left",
+            wraplength=700, font=("Noto Sans CJK SC", 9),
+        ).pack(anchor="w", pady=(4, 16))
+
+        form = tk.Frame(
+            content, bg=COLORS["surface"], highlightbackground=COLORS["line"],
+            highlightthickness=1,
+        )
+        form.pack(fill="both", expand=True)
+        form.grid_columnconfigure(1, weight=1)
+        rows = (
+            ("SpellIcon.dbc", self.dbc_var, self._choose_dbc),
+            ("客户端解压根目录", self.root_var, self._choose_root),
+        )
+        for row, (label, variable, command) in enumerate(rows):
+            tk.Label(
+                form, text=label, bg=COLORS["surface"], fg=COLORS["ink"],
+                font=("Noto Sans CJK SC", 9, "bold"),
+            ).grid(row=row, column=0, sticky="w", padx=(18, 12), pady=(18 if row == 0 else 10, 10))
+            ttk.Entry(form, textvariable=variable).grid(
+                row=row, column=1, sticky="ew", pady=(18 if row == 0 else 10, 10)
+            )
+            ttk.Button(form, text="浏览…", command=command).grid(
+                row=row, column=2, padx=(10, 18), pady=(18 if row == 0 else 10, 10)
+            )
+        tk.Label(
+            form,
+            text="根目录下应存在 Interface/Icons；也可直接选择包含 *.blp 的 Icons 目录。清空两个路径可停用图标同步，但已缓存图标仍可显示。",
+            bg=COLORS["surface"], fg=COLORS["muted"], justify="left",
+            wraplength=650, font=("Noto Sans CJK SC", 8),
+        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=18, pady=(0, 14))
+
+        actions = tk.Frame(content, bg=COLORS["paper"])
+        actions.pack(fill="x", pady=(14, 0))
+        ttk.Button(actions, text="取消", command=self.destroy).pack(side="right")
+        ttk.Button(
+            actions, text="保存并刷新", style="Accent.TButton", command=self._save
+        ).pack(side="right", padx=(0, 8))
+
+    def _choose_dbc(self):
+        value = filedialog.askopenfilename(
+            parent=self, title="选择 SpellIcon.dbc",
+            filetypes=(("DBC 文件", "*.dbc"), ("所有文件", "*")),
+        )
+        if value:
+            self.dbc_var.set(value)
+
+    def _choose_root(self):
+        value = filedialog.askdirectory(parent=self, title="选择客户端解压根目录")
+        if value:
+            self.root_var.set(value)
+
+    def _save(self):
+        dbc = self.dbc_var.get().strip()
+        root = self.root_var.get().strip()
+        try:
+            if bool(dbc) != bool(root):
+                raise ValueError("SpellIcon.dbc 和客户端解压根目录需要同时填写，或同时清空。")
+            if dbc:
+                dbc_path = Path(dbc).expanduser()
+                root_path = Path(root).expanduser()
+                if not dbc_path.is_file():
+                    raise ValueError(f"SpellIcon.dbc 不存在：{dbc_path}")
+                if not root_path.is_dir():
+                    raise ValueError(f"客户端解压根目录不存在：{root_path}")
+                load_spell_icon_dbc(dbc_path)
+            self.app.save_spell_icon_settings(dbc, root)
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror("图标资源配置无效", str(exc), parent=self)
             return
         self.destroy()
 
@@ -553,6 +730,8 @@ class CustomSkillEditorDialog(tk.Toplevel):
 class CustomSkillsDialog(tk.Toplevel):
     """Manage all GUI-defined skills for one class feature."""
 
+    COLUMN_MIN_SIZES = (170, 52, 130, 55, 90, 120)
+
     def __init__(self, view: "SkillConfigView"):
         super().__init__(view)
         self.view = view
@@ -560,88 +739,177 @@ class CustomSkillsDialog(tk.Toplevel):
         self.minsize(760, 480)
         _restore_dialog_geometry(
             self, self.view.app.settings, CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY,
-            "920x540",
+            "980x560",
         )
         self.configure(bg=COLORS["paper"])
         self.transient(view.winfo_toplevel())
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.grab_set()
         self.row_keys: dict[str, tuple[str, str]] = {}
+        self.row_frames: dict[tuple[str, str], tk.Frame] = {}
+        self.icon_labels: dict[tuple[str, str], tk.Label] = {}
+        self.selected_key: tuple[str, str] | None = None
+        self.icon_images: dict[str, object] = {}
         self._build()
+        add_listener = getattr(self.view, "add_icon_listener", None)
+        if add_listener:
+            add_listener(self._icons_updated)
         self.refresh_rows()
+
+    @classmethod
+    def _configure_columns(cls, frame: tk.Frame):
+        for column, minsize in enumerate(cls.COLUMN_MIN_SIZES):
+            frame.grid_columnconfigure(
+                column, minsize=minsize, weight=1 if column == 5 else 0
+            )
 
     def _build(self):
         content = tk.Frame(self, bg=COLORS["paper"])
         content.pack(fill="both", expand=True, padx=22, pady=18)
         content.grid_columnconfigure(0, weight=1)
-        content.grid_rowconfigure(2, weight=1)
+        content.grid_rowconfigure(3, weight=1)
         tk.Label(
             content, text="管理自定义技能", bg=COLORS["paper"], fg=COLORS["ink"],
             font=("Noto Sans CJK SC", 17, "bold"),
         ).grid(row=0, column=0, sticky="w")
         tk.Label(
             content,
-            text="这里新增的技能会参与当前值/描述查询和实际应用；完成后请回到技能配置页点击“保存配置”。",
+            text="这里新增的技能会参与图标、当前值、描述查询和实际应用；完成后请回到技能配置页点击“保存配置”。",
             bg=COLORS["paper"], fg=COLORS["muted"],
             font=("Noto Sans CJK SC", 9),
         ).grid(row=1, column=0, sticky="w", pady=(4, 14))
 
-        table_box = tk.Frame(content, bg=COLORS["surface"])
-        table_box.grid(row=2, column=0, sticky="nsew")
-        columns = ("group", "skill", "enabled", "value", "condition")
-        self.tree = ttk.Treeview(table_box, columns=columns, show="headings", selectmode="browse")
-        headings = {
-            "group": "修改类型", "skill": "技能定义", "enabled": "启用",
-            "value": "修改值", "condition": "查询条件",
-        }
-        widths = {"group": 170, "skill": 130, "enabled": 55, "value": 90, "condition": 400}
-        for column in columns:
-            self.tree.heading(column, text=headings[column])
-            self.tree.column(column, width=widths[column], minwidth=50, stretch=column == "condition")
-        scrollbar = ttk.Scrollbar(table_box, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        self.tree.bind("<Double-1>", lambda _event: self._edit())
+        headings = tk.Frame(content, bg=COLORS["slate_soft"])
+        headings.grid(row=2, column=0, sticky="ew")
+        self._configure_columns(headings)
+        for column, text in enumerate(
+            ("修改类型", "图标", "技能定义", "启用", "修改值", "查询条件")
+        ):
+            tk.Label(
+                headings, text=text,
+                anchor="center" if column in (1, 3) else "w",
+                bg=COLORS["slate_soft"], fg=COLORS["muted"],
+                font=("Noto Sans CJK SC", 8, "bold"),
+            ).grid(row=0, column=column, sticky="ew", padx=8, pady=7)
+
+        self.rows = ScrollFrame(content, bg=COLORS["surface"])
+        self.rows.grid(row=3, column=0, sticky="nsew")
 
         actions = tk.Frame(content, bg=COLORS["paper"])
-        actions.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        actions.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="新增技能", style="Accent.TButton", command=self._add).pack(side="left")
         ttk.Button(actions, text="编辑", command=self._edit).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="删除", command=self._delete).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="图标资源", command=self._configure_icons).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="关闭", command=self._close).pack(side="right")
 
     def _close(self) -> None:
+        remove_listener = getattr(self.view, "remove_icon_listener", None)
+        if remove_listener:
+            remove_listener(self._icons_updated)
         self.update_idletasks()
         self.view.app.save_dialog_geometry(
             CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY, self.geometry()
         )
         self.destroy()
 
+    def _configure_icons(self):
+        IconResourcesDialog(self.view.app, self)
+
+    def _bind_row(self, widget: tk.Widget, key: tuple[str, str]):
+        widget.bind("<Button-1>", lambda _event, item=key: self._select(item), add="+")
+        widget.bind("<Double-1>", lambda _event, item=key: self._edit(item), add="+")
+        for child in widget.winfo_children():
+            self._bind_row(child, key)
+
+    def _select(self, key: tuple[str, str]):
+        self.selected_key = key
+        for row_key, frame in self.row_frames.items():
+            background = COLORS["blue_soft"] if row_key == key else frame._normal_bg
+            frame.configure(bg=background)
+            for child in frame.winfo_children():
+                try:
+                    child.configure(bg=background)
+                except tk.TclError:
+                    pass
+
     def refresh_rows(self):
+        selected = self.selected_key
         self.row_keys.clear()
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        for index, row in enumerate(self.view.custom_skill_rows()):
-            group_name, group_title, skill, enabled, value, condition = row
+        self.row_frames.clear()
+        self.icon_labels.clear()
+        self.icon_images.clear()
+        for child in self.rows.inner.winfo_children():
+            child.destroy()
+        for index, row_data in enumerate(self.view.custom_skill_rows()):
+            group_name, group_title, skill, enabled, value, condition = row_data
+            key = (group_name, skill)
             item_id = f"custom-{index}"
-            self.row_keys[item_id] = (group_name, skill)
-            self.tree.insert(
-                "", "end", iid=item_id,
-                values=(group_title, skill, "是" if enabled else "否", value, condition),
+            self.row_keys[item_id] = key
+            row_bg = COLORS["surface"] if index % 2 == 0 else "#F8FAFC"
+            row = tk.Frame(self.rows.inner, bg=row_bg)
+            row._normal_bg = row_bg
+            row.pack(fill="x")
+            self._configure_columns(row)
+            self.row_frames[key] = row
+            values = (group_title, skill, "是" if enabled else "否", value, condition)
+            tk.Label(
+                row, text=values[0], anchor="w", bg=row_bg, fg=COLORS["ink"],
+                font=("Noto Sans CJK SC", 9),
+            ).grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+            image = None
+            image_getter = getattr(self.view, "skill_icon_image", None)
+            if image_getter:
+                image = image_getter(skill, 30)
+            if image is not None:
+                self.icon_images[skill] = image
+            icon_label = tk.Label(
+                row, image=image, text="—" if image is None else "",
+                anchor="center", bg=row_bg, fg=COLORS["muted"],
             )
+            icon_label.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+            self.icon_labels[key] = icon_label
+            for column, value_text in enumerate(values[1:], start=2):
+                tk.Label(
+                    row, text=value_text, anchor="center" if column == 3 else "w",
+                    justify="left", wraplength=360 if column == 5 else 125,
+                    bg=row_bg, fg=COLORS["ink"] if column != 5 else COLORS["muted"],
+                    font=("Noto Sans CJK SC", 9 if column < 5 else 8),
+                ).grid(row=0, column=column, sticky="ew", padx=8, pady=8)
+            self._bind_row(row, key)
+        if selected in self.row_frames:
+            self._select(selected)
+        elif selected is not None:
+            self.selected_key = None
+
+    def _icons_updated(self, changed=None):
+        if not changed:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+            for key, label in self.icon_labels.items():
+                skill = key[1]
+                if skill not in changed:
+                    continue
+                image = self.view.skill_icon_image(skill, 30)
+                if image is None:
+                    self.icon_images.pop(skill, None)
+                else:
+                    self.icon_images[skill] = image
+                label.configure(image=image or "", text="—" if image is None else "")
+                label._spell_icon_image = image
+        except tk.TclError:
+            pass
 
     def _selected(self) -> tuple[str, str] | None:
-        selection = self.tree.selection()
-        if not selection:
-            return None
-        return self.row_keys.get(selection[0])
+        return self.selected_key
 
     def _add(self):
         CustomSkillEditorDialog(self)
 
-    def _edit(self):
-        selected = self._selected()
+    def _edit(self, selected=None):
+        selected = selected if isinstance(selected, tuple) else self._selected()
         if selected is None:
             messagebox.showinfo("请选择技能", "请先选择需要编辑的自定义技能。", parent=self)
             return
@@ -658,6 +926,7 @@ class CustomSkillsDialog(tk.Toplevel):
         ):
             return
         self.view.remove_custom_skill(group_name, skill)
+        self.selected_key = None
         self.refresh_rows()
 
 
@@ -690,10 +959,16 @@ class SkillConfigView(tk.Frame):
         self.value_vars: dict[tuple[str, str], tk.StringVar] = {}
         self.current_value_vars: dict[tuple[str, str], tk.StringVar] = {}
         self.description_vars: dict[str, tk.StringVar] = {}
+        self.icon_paths: dict[str, Path] = {}
+        self.icon_images: dict[tuple[str, int, str], object] = {}
+        self.icon_listeners: list[Callable] = []
         self.column_header_widgets: dict[int, tk.Widget] = {}
         self.row_column_widgets: dict[tuple[str, str], dict[int, tk.Widget]] = {}
         self.detail_request_id = 0
         self._initialize_variables()
+        cached_loader = getattr(self.app, "cached_skill_icons", None)
+        if cached_loader:
+            self.icon_paths = cached_loader(self.feature, self._collect())
         active_group_name = navigation_state.get("active_group")
         self.active_group = next(
             (
@@ -706,6 +981,13 @@ class SkillConfigView(tk.Frame):
         self.summary_var = tk.StringVar(self)
         self.description_status_var = tk.StringVar(
             self, value="正在从当前数据库读取技能当前值与描述"
+        )
+        self.icon_status_var = tk.StringVar(
+            self,
+            value=(
+                f"图标：已加载缓存 {len(self.icon_paths)} 项，正在同步数据库"
+                if self.icon_paths else "图标：正在同步数据库与本地缓存"
+            ),
         )
         self.pack(fill="both", expand=True)
         self._build()
@@ -734,7 +1016,7 @@ class SkillConfigView(tk.Frame):
     def _configure_skill_columns(frame: tk.Frame):
         for column, minsize in enumerate(SKILL_COLUMN_MIN_SIZES):
             frame.grid_columnconfigure(
-                column, minsize=minsize, weight=1 if column == 4 else 0
+                column, minsize=minsize, weight=1 if column == 5 else 0
             )
 
     def _build(self):
@@ -744,6 +1026,9 @@ class SkillConfigView(tk.Frame):
         # application's minimum size. The title area is the flexible region.
         header_actions = tk.Frame(header, bg=COLORS["paper"])
         header_actions.pack(side="right", anchor="s")
+        ttk.Button(
+            header_actions, text="图标资源", command=self._configure_icon_resources
+        ).pack(side="left", padx=(0, 8))
         ttk.Button(
             header_actions, text="管理自定义技能", command=self._manage_custom_skills
         ).pack(side="left", padx=(0, 8))
@@ -776,10 +1061,16 @@ class SkillConfigView(tk.Frame):
             summary, textvariable=self.summary_var, bg=COLORS["navy"], fg="white",
             font=("Noto Sans CJK SC", 10, "bold"),
         ).pack(side="left", padx=16)
+        status_box = tk.Frame(summary, bg=COLORS["navy"])
+        status_box.pack(side="right", padx=16)
         tk.Label(
-            summary, textvariable=self.description_status_var, bg=COLORS["navy"],
-            fg="#B8C8D7", font=("Noto Sans CJK SC", 9),
-        ).pack(side="right", padx=16)
+            status_box, textvariable=self.description_status_var, bg=COLORS["navy"],
+            fg="#B8C8D7", font=("Noto Sans CJK SC", 8), anchor="e",
+        ).pack(anchor="e")
+        tk.Label(
+            status_box, textvariable=self.icon_status_var, bg=COLORS["navy"],
+            fg="#9CC4D2", font=("Noto Sans CJK SC", 8), anchor="e",
+        ).pack(anchor="e")
 
         body = tk.Frame(self, bg=COLORS["paper"])
         body.pack(fill="both", expand=True, padx=28, pady=(0, 22))
@@ -904,16 +1195,16 @@ class SkillConfigView(tk.Frame):
         columns = tk.Frame(section, bg=COLORS["slate_soft"])
         columns.pack(fill="x", padx=1)
         self._configure_skill_columns(columns)
-        headings = ("启用", "技能", "修改值", "当前值", "技能描述")
+        headings = ("启用", "图标", "技能", "修改值", "当前值", "技能描述")
         for column, text in enumerate(headings):
             label = tk.Label(
-                columns, text=text, anchor="center" if column == 0 else "w",
+                columns, text=text, anchor="center" if column in (0, 1) else "w",
                 bg=COLORS["slate_soft"], fg=COLORS["muted"],
                 font=("Noto Sans CJK SC", 8, "bold"),
             )
             label.grid(
                 row=0, column=column,
-                sticky="ew" if column in (0, 4) else "w",
+                sticky="ew" if column in (0, 1, 5) else "w",
                 padx=(8, 8), pady=7,
             )
             self.column_header_widgets[column] = label
@@ -929,17 +1220,25 @@ class SkillConfigView(tk.Frame):
             enabled = tk.Checkbutton(
                 row, variable=self.enabled_vars[key], command=self._update_summary,
                 bg=row_bg, activebackground=row_bg, highlightthickness=0,
+                anchor="center",
             )
-            enabled.grid(row=0, column=0, sticky="n", padx=8, pady=7)
+            enabled.grid(row=0, column=0, sticky="ew", padx=8, pady=7)
             widgets[0] = enabled
+            icon_image = self.skill_icon_image(skill, 34)
+            icon_label = tk.Label(
+                row, image=icon_image, text="—" if icon_image is None else "",
+                anchor="center", bg=row_bg, fg=COLORS["muted"],
+            )
+            icon_label.grid(row=0, column=1, sticky="ew", padx=8, pady=4)
+            widgets[1] = icon_label
             skill_label = tk.Label(
                 row, text=skill, width=10, anchor="w", justify="left", wraplength=96,
                 bg=row_bg, fg=COLORS["ink"], font=("Noto Sans CJK SC", 9),
             )
-            skill_label.grid(row=0, column=1, sticky="nw", padx=8, pady=8)
-            widgets[1] = skill_label
+            skill_label.grid(row=0, column=2, sticky="nw", padx=8, pady=8)
+            widgets[2] = skill_label
             value_box = tk.Frame(row, bg=row_bg)
-            value_box.grid(row=0, column=2, sticky="nw", padx=8, pady=6)
+            value_box.grid(row=0, column=3, sticky="nw", padx=8, pady=6)
             ttk.Entry(
                 value_box, textvariable=self.value_vars[key], width=9
             ).pack(side="left")
@@ -947,21 +1246,21 @@ class SkillConfigView(tk.Frame):
                 value_box, text=self.active_group.value_label, width=6, anchor="w",
                 bg=row_bg, fg=COLORS["muted"], font=("Noto Sans CJK SC", 8),
             ).pack(side="left", padx=(5, 0))
-            widgets[2] = value_box
+            widgets[3] = value_box
             current_label = tk.Label(
                 row, textvariable=self.current_value_vars[key], width=17, anchor="w",
                 justify="left", wraplength=110, bg=row_bg, fg=COLORS["ink"],
                 font=("Noto Sans CJK SC", 8),
             )
-            current_label.grid(row=0, column=3, sticky="nw", padx=8, pady=7)
-            widgets[3] = current_label
+            current_label.grid(row=0, column=4, sticky="nw", padx=8, pady=7)
+            widgets[4] = current_label
             description_label = tk.Label(
                 row, textvariable=self.description_vars[skill], anchor="w",
                 justify="left", wraplength=100, bg=row_bg, fg=COLORS["muted"],
                 font=("Noto Sans CJK SC", 8),
             )
             description_label.grid(
-                row=0, column=4, sticky="ew", padx=8, pady=7
+                row=0, column=5, sticky="ew", padx=8, pady=7
             )
             description_label.bind(
                 "<Configure>",
@@ -969,10 +1268,93 @@ class SkillConfigView(tk.Frame):
                     wraplength=max(90, event.width - 4)
                 ),
             )
-            widgets[4] = description_label
+            widgets[5] = description_label
             self.row_column_widgets[key] = widgets
         group_name = self.active_group.config_name
         self.after_idle(lambda: self._restore_group_scroll(group_name))
+
+    def _configure_icon_resources(self):
+        IconResourcesDialog(self.app, self)
+
+    def skill_icon_image(self, skill: str, size: int = 34):
+        """Return a retained Tk image for one skill's cached PNG."""
+        path = self.icon_paths.get(skill)
+        if path is None or not path.is_file():
+            return None
+        key = (skill, int(size), str(path))
+        if key not in self.icon_images:
+            image = _load_tk_icon(path, int(size))
+            if image is None:
+                return None
+            self.icon_images[key] = image
+        return self.icon_images[key]
+
+    def add_icon_listener(self, callback: Callable) -> None:
+        if callback not in self.icon_listeners:
+            self.icon_listeners.append(callback)
+
+    def remove_icon_listener(self, callback: Callable) -> None:
+        try:
+            self.icon_listeners.remove(callback)
+        except ValueError:
+            pass
+
+    def _notify_icon_listeners(self, changed_skills: frozenset[str]) -> None:
+        for callback in tuple(self.icon_listeners):
+            try:
+                callback(changed_skills)
+            except tk.TclError:
+                self.remove_icon_listener(callback)
+
+    def _icons_loaded(self, result: SpellIconSyncResult | None) -> None:
+        if result is None:
+            return
+        changed = result.changed_skills
+        self.icon_paths = dict(result.paths)
+        if changed:
+            old_images = self.icon_images
+            self.icon_images = {
+                key: image
+                for key, image in old_images.items()
+                if key[0] not in changed
+            }
+            for (_group_name, skill), widgets in self.row_column_widgets.items():
+                if skill not in changed:
+                    continue
+                label = widgets.get(1)
+                if label is None:
+                    continue
+                image = self.skill_icon_image(skill, 34)
+                label.configure(image=image or "", text="—" if image is None else "")
+                label._spell_icon_image = image
+            self._notify_icon_listeners(changed)
+
+        if result.error:
+            prefix = f"图标：已加载缓存 {len(result.paths)} 项" if result.paths else "图标同步未完成"
+            self.icon_status_var.set(f"{prefix} · {result.error}")
+        elif changed:
+            self.icon_status_var.set(
+                f"图标：后台同步更新 {len(changed)} 项，缓存共 {len(result.paths)} 项"
+            )
+        else:
+            self.icon_status_var.set(
+                f"图标：缓存与数据库资源一致，共 {len(result.paths)} 项"
+            )
+
+    def refresh_icon_resources(self) -> None:
+        """Reload cached images immediately, then validate them in the DB worker."""
+        cached_loader = getattr(self.app, "cached_skill_icons", None)
+        cached = cached_loader(self.feature, self._collect()) if cached_loader else {}
+        changed = frozenset(
+            skill
+            for skill in set(self.icon_paths) | set(cached)
+            if self.icon_paths.get(skill) != cached.get(skill)
+        )
+        self._icons_loaded(SpellIconSyncResult(cached, changed))
+        self.icon_status_var.set(
+            f"图标：已加载缓存 {len(cached)} 项，正在同步数据库与资源"
+        )
+        self._request_details()
 
     def _request_details(self):
         request = getattr(self.app, "request_skill_details", None)
@@ -983,10 +1365,10 @@ class SkillConfigView(tk.Frame):
         request_id = self.detail_request_id
         self.description_status_var.set("正在从当前数据库读取技能当前值与描述")
 
-        def callback(descriptions, current_values, error=""):
+        def callback(descriptions, current_values, error="", icon_result=None):
             if request_id != self.detail_request_id:
                 return
-            self._details_loaded(descriptions, current_values, error)
+            self._details_loaded(descriptions, current_values, error, icon_result)
 
         configuration = self._collect()
         try:
@@ -1001,6 +1383,7 @@ class SkillConfigView(tk.Frame):
         descriptions: dict[str, str],
         current_values: dict[tuple[str, str], str],
         error: str = "",
+        icon_result: SpellIconSyncResult | None = None,
     ):
         try:
             if not self.winfo_exists():
@@ -1026,6 +1409,7 @@ class SkillConfigView(tk.Frame):
                 missing_values += 1
                 variable.set("未找到可修改值")
 
+        self._icons_loaded(icon_result)
         if error:
             self.description_status_var.set(f"技能数据读取失败：{error}")
             return
@@ -1230,6 +1614,7 @@ class DbToolApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.settings: AppSettings = load_settings()
+        self.spell_icon_cache = self._create_spell_icon_cache()
         self.title("Azeroth DB Forge")
         self.geometry(self.settings.window_geometry)
         self.minsize(1040, 680)
@@ -1243,7 +1628,7 @@ class DbToolApp(tk.Tk):
         self.connection_var = tk.StringVar(value="尚未连接")
         self.selected: dict[str, tk.BooleanVar] = {f.id: tk.BooleanVar(value=False) for f in FEATURES}
         self.work_queue: queue.Queue[tuple[str, object]] = queue.Queue()
-        self.skill_detail_callbacks: dict[tuple[str, str, str], list[Callable]] = {}
+        self.skill_detail_callbacks: dict[tuple[object, ...], list[Callable]] = {}
         self.skill_navigation_states: dict[str, dict] = {}
         self.active_skill_feature_id: str | None = None
         self.current_skill_view: SkillConfigView | None = None
@@ -1259,6 +1644,30 @@ class DbToolApp(tk.Tk):
     @property
     def profile(self) -> DatabaseProfile:
         return self.settings.profiles[self.settings.selected_profile]
+
+    def _create_spell_icon_cache(self) -> SpellIconCache:
+        suggested_dbc, suggested_root = suggested_spell_icon_paths()
+        return SpellIconCache(
+            self.settings.spell_icon_dbc_path or suggested_dbc,
+            self.settings.spell_icon_client_root or suggested_root,
+        )
+
+    def cached_skill_icons(self, feature: Feature, configuration) -> dict[str, Path]:
+        return self.spell_icon_cache.cached_paths(
+            self.profile, feature, configuration
+        )
+
+    def save_spell_icon_settings(self, dbc_file: str, client_root: str) -> None:
+        updated = replace(
+            self.settings,
+            spell_icon_dbc_path=str(dbc_file or "").strip(),
+            spell_icon_client_root=str(client_root or "").strip(),
+        )
+        save_settings(updated)
+        self.settings = updated
+        self.spell_icon_cache = self._create_spell_icon_cache()
+        if self.current_skill_view is not None:
+            self.current_skill_view.refresh_icon_resources()
 
     def feature_configuration(self, feature: Feature):
         if not feature.configurable:
@@ -1626,8 +2035,10 @@ class DbToolApp(tk.Tk):
         self, feature: Feature, callback: Callable, configuration=None
     ) -> None:
         normalized = feature.normalize_configuration(configuration)
+        icon_cache = self.spell_icon_cache
         key = (
             self.profile.target_label,
+            id(icon_cache),
             feature.id,
             feature.effective_version(normalized),
         )
@@ -1637,30 +2048,72 @@ class DbToolApp(tk.Tk):
             return
         threading.Thread(
             target=self._skill_detail_worker,
-            args=(replace(self.profile), feature, copy.deepcopy(normalized), key),
+            args=(
+                replace(self.profile), feature, copy.deepcopy(normalized), key,
+                icon_cache,
+            ),
             daemon=True,
         ).start()
 
     @staticmethod
     def _deliver_skill_details(
-        callback: Callable, descriptions, current_values, error: str
+        callback: Callable, descriptions, current_values, error: str,
+        icon_result: SpellIconSyncResult,
     ) -> None:
         try:
-            callback(descriptions, current_values, error)
+            try:
+                parameters = tuple(inspect.signature(callback).parameters.values())
+                accepts_icons = any(
+                    parameter.kind == inspect.Parameter.VAR_POSITIONAL
+                    for parameter in parameters
+                ) or sum(
+                    parameter.kind
+                    in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    )
+                    for parameter in parameters
+                ) >= 4
+            except (TypeError, ValueError):
+                accepts_icons = True
+            if accepts_icons:
+                callback(descriptions, current_values, error, icon_result)
+            else:
+                # Compatibility with external/fake callers using the old callback.
+                callback(descriptions, current_values, error)
         except tk.TclError:
             # The user may have left the skill page while the DB query was running.
             pass
 
     def _skill_detail_worker(
-        self, profile: DatabaseProfile, feature: Feature, configuration, key
+        self, profile: DatabaseProfile, feature: Feature, configuration, key,
+        icon_cache: SpellIconCache,
     ):
         try:
             details = load_skill_details(profile, feature, configuration)
+            icon_result = icon_cache.sync(
+                profile, feature, configuration, details.icons
+            )
             self.work_queue.put(
-                ("skill_details", (key, details.descriptions, details.current_values, ""))
+                (
+                    "skill_details",
+                    (
+                        key, details.descriptions, details.current_values, "",
+                        icon_result,
+                    ),
+                )
             )
         except Exception as exc:
-            self.work_queue.put(("skill_details", (key, {}, {}, str(exc))))
+            try:
+                cached = icon_cache.cached_paths(profile, feature, configuration)
+            except Exception:
+                cached = {}
+            self.work_queue.put(
+                (
+                    "skill_details",
+                    (key, {}, {}, str(exc), SpellIconSyncResult(cached, error=str(exc))),
+                )
+            )
 
     def refresh_state(self):
         if self.running:
@@ -1695,11 +2148,11 @@ class DbToolApp(tk.Tk):
                         self.connection_var.set(f"连接失败 · {self.profile.name}")
                         messagebox.showerror("数据库连接失败", f"{self.profile.target_label}\n\n{error}\n\n可在“连接配置”中修改地址和账号。", parent=self)
                 elif kind == "skill_details":
-                    key, descriptions, current_values, error = payload
+                    key, descriptions, current_values, error, icon_result = payload
                     callbacks = self.skill_detail_callbacks.pop(key, [])
                     for callback in callbacks:
                         self._deliver_skill_details(
-                            callback, descriptions, current_values, error
+                            callback, descriptions, current_values, error, icon_result
                         )
                 elif kind == "progress":
                     result: RunResult = payload

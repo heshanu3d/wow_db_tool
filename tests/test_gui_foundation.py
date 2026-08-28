@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib
 import os
+import struct
 import tempfile
 import tkinter as tk
 import unittest
@@ -10,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from tkinter import ttk
 from unittest.mock import Mock, patch
+
+from PIL import Image
 
 from src.core.mysql_core import Mysql
 from src.customization.base import spell
@@ -36,6 +39,13 @@ from src.gui.features import (
 )
 from src.gui.runner import run_feature
 from src.gui.skill_descriptions import load_skill_details, preview_skill_condition, skill_names
+from src.gui.spell_icons import (
+    SkillIconReference,
+    SpellIconCache,
+    SpellIconSyncResult,
+    get_spell_icon_path,
+    load_spell_icon_dbc,
+)
 from src.gui.state import FeatureStateStore
 
 
@@ -290,6 +300,8 @@ class GuiFoundationTests(unittest.TestCase):
                 dialog_geometries={
                     CUSTOM_SKILLS_DIALOG_GEOMETRY_KEY: "940x560+30+40"
                 },
+                spell_icon_dbc_path="/tmp/SpellIcon.dbc",
+                spell_icon_client_root="/tmp/wow-client",
             )
             save_settings(settings, path)
             loaded = load_settings(path)
@@ -301,6 +313,8 @@ class GuiFoundationTests(unittest.TestCase):
             self.assertEqual(loaded.profiles[0].target_label, "wow@db.example:3307/world")
             self.assertEqual(loaded.profiles[0].connector_config()["password"], "secret")
             self.assertEqual(loaded.feature_configs, feature_config)
+            self.assertEqual(loaded.spell_icon_dbc_path, "/tmp/SpellIcon.dbc")
+            self.assertEqual(loaded.spell_icon_client_root, "/tmp/wow-client")
 
     def test_save_dialog_geometry_updates_only_the_requested_layout(self):
         app = SimpleNamespace(
@@ -332,6 +346,8 @@ class GuiFoundationTests(unittest.TestCase):
             dialog_geometries={
                 CUSTOM_SKILL_EDITOR_GEOMETRY_KEY: "800x700+70+80"
             },
+            spell_icon_dbc_path="/tmp/SpellIcon.dbc",
+            spell_icon_client_root="/tmp/wow-client",
         )
         app = SimpleNamespace(
             settings=original_settings, apply_settings=Mock()
@@ -351,7 +367,73 @@ class GuiFoundationTests(unittest.TestCase):
         self.assertEqual(
             updated.dialog_geometries, original_settings.dialog_geometries
         )
+        self.assertEqual(updated.spell_icon_dbc_path, "/tmp/SpellIcon.dbc")
+        self.assertEqual(updated.spell_icon_client_root, "/tmp/wow-client")
         dialog.destroy.assert_called_once()
+
+    def test_spell_icon_dbc_lookup_and_persistent_difference_cache(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        configuration = feature.default_configuration()
+        profile = DatabaseProfile("测试")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dbc_file = root / "DBFilesClient" / "SpellIcon.dbc"
+            icon_file = root / "Interface" / "Icons" / "Spell_Test.blp"
+            cache_root = root / "cache"
+            dbc_file.parent.mkdir(parents=True)
+            icon_file.parent.mkdir(parents=True)
+            strings = b"\0Interface\\Icons\\Spell_Test\0"
+            dbc_file.write_bytes(
+                struct.pack("<4s4I", b"WDBC", 1, 2, 8, len(strings))
+                + struct.pack("<II", 136, 1)
+                + strings
+            )
+            icon_file.write_bytes(b"first-icon-source")
+
+            icon_map = load_spell_icon_dbc(dbc_file)
+            self.assertEqual(icon_map, {136: "Interface\\Icons\\Spell_Test"})
+            self.assertEqual(
+                get_spell_icon_path(136, icon_map, root), icon_file
+            )
+
+            cache = SpellIconCache(dbc_file, root, cache_root)
+            reference = {
+                "传染": SkillIconReference(
+                    spell_id=50842, spell_icon_id=136, active_icon_id=0
+                )
+            }
+
+            def convert(source, target):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
+
+            with patch.object(cache, "_convert_blp", side_effect=convert) as converter:
+                first = cache.sync(profile, feature, configuration, reference)
+                self.assertEqual(first.changed_skills, frozenset({"传染"}))
+                self.assertTrue(first.paths["传染"].is_file())
+                self.assertEqual(converter.call_count, 1)
+
+                unchanged = cache.sync(profile, feature, configuration, reference)
+                self.assertEqual(unchanged.changed_skills, frozenset())
+                self.assertEqual(converter.call_count, 1)
+
+                unchanged.paths["传染"].write_bytes(b"damaged-cache")
+                repaired = cache.sync(profile, feature, configuration, reference)
+                self.assertEqual(repaired.changed_skills, frozenset({"传染"}))
+                self.assertEqual(converter.call_count, 2)
+
+                icon_file.write_bytes(b"updated-icon-source-with-new-size")
+                updated = cache.sync(profile, feature, configuration, reference)
+                self.assertEqual(updated.changed_skills, frozenset({"传染"}))
+                self.assertEqual(converter.call_count, 3)
+
+            reopened = SpellIconCache(dbc_file, root, cache_root)
+            self.assertEqual(
+                reopened.cached_paths(profile, feature, configuration), updated.paths
+            )
+            removed = reopened.sync(profile, feature, configuration, {})
+            self.assertEqual(removed.changed_skills, frozenset({"传染"}))
+            self.assertNotIn("传染", removed.paths)
 
     def test_saving_skill_configuration_keeps_loaded_run_state(self):
         feature = FEATURE_BY_ID["class.dk.bundle"]
@@ -780,6 +862,8 @@ class GuiFoundationTests(unittest.TestCase):
         def spell_row(spell_id, name, description, gcd, **extra):
             row = {
                 "spell_id": spell_id,
+                "spell_icon_id": 136 if spell_id == 1 else 0,
+                "active_icon_id": 0,
                 "spell_name": name,
                 "skill_description": description,
                 "proc_chance": 0,
@@ -832,6 +916,8 @@ class GuiFoundationTests(unittest.TestCase):
                 ("mod_gcd_time_skills", "技能乙"): "0ms",
             },
         )
+        self.assertEqual(details.icons["技能甲"].spell_id, 1)
+        self.assertEqual(details.icons["技能甲"].effective_icon_id, 136)
         connect.assert_called_once()
         connection.cursor.assert_called_once_with(dictionary=True)
         self.assertEqual(cursor.execute.call_count, 2)
@@ -975,7 +1061,14 @@ class GuiFoundationTests(unittest.TestCase):
             group = feature.config_groups[0]
             first_skill = next(iter(view.configuration[group.config_name]))
             first_widgets = view.row_column_widgets[(group.config_name, first_skill)]
-            for column in (1, 2, 3, 4):
+            self.assertEqual(
+                tuple(
+                    view.column_header_widgets[column].cget("text")
+                    for column in range(6)
+                ),
+                ("启用", "图标", "技能", "修改值", "当前值", "技能描述"),
+            )
+            for column in range(6):
                 self.assertAlmostEqual(
                     view.column_header_widgets[column].winfo_rootx(),
                     first_widgets[column].winfo_rootx(),
@@ -1022,6 +1115,115 @@ class GuiFoundationTests(unittest.TestCase):
             root.update()
         finally:
             root.destroy()
+
+    @unittest.skipUnless(os.environ.get("DISPLAY"), "requires a graphical display")
+    def test_cached_icons_appear_in_skill_and_custom_skill_views(self):
+        root = tk.Tk()
+        root.geometry("980x680")
+        main = tk.Frame(root)
+        main.pack(fill="both", expand=True)
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        with tempfile.TemporaryDirectory() as directory:
+            png = Path(directory) / "spell.png"
+            Image.new("RGBA", (48, 48), (28, 123, 120, 255)).save(png)
+
+            def request_details(_feature, callback, configuration=None):
+                configuration = configuration or feature.default_configuration()
+                descriptions = {
+                    skill: f"{skill}描述"
+                    for group in feature.config_groups
+                    for skill in configuration[group.config_name]
+                }
+                current_values = {
+                    (group.config_name, skill): "250ms"
+                    for group in feature.config_groups
+                    for skill in configuration[group.config_name]
+                }
+                callback(descriptions, current_values, "")
+
+            app = SimpleNamespace(
+                main=main,
+                settings=AppSettings(profiles=[DatabaseProfile("测试")]),
+                profile=DatabaseProfile("测试"),
+                request_skill_details=request_details,
+                cached_skill_icons=lambda _feature, _configuration: {
+                    "传染": png,
+                    "测试自定义技能": png,
+                },
+                save_dialog_geometry=Mock(),
+            )
+            manager = None
+            try:
+                view = SkillConfigView(app, feature)
+                root.update()
+                group = feature.config_groups[0]
+                self.assertTrue(
+                    view.row_column_widgets[(group.config_name, "传染")][1].cget(
+                        "image"
+                    )
+                )
+
+                listener = Mock()
+                view.add_icon_listener(listener)
+                view._icons_loaded(SpellIconSyncResult(dict(view.icon_paths)))
+                listener.assert_not_called()
+                view._icons_loaded(
+                    SpellIconSyncResult(
+                        {"测试自定义技能": png}, frozenset({"传染"})
+                    )
+                )
+                self.assertFalse(
+                    view.row_column_widgets[(group.config_name, "传染")][1].cget(
+                        "image"
+                    )
+                )
+                view._icons_loaded(
+                    SpellIconSyncResult(
+                        {"传染": png, "测试自定义技能": png},
+                        frozenset({"传染"}),
+                    )
+                )
+                self.assertEqual(listener.call_count, 2)
+
+                view.upsert_custom_skill(
+                    None,
+                    None,
+                    group.config_name,
+                    "测试自定义技能",
+                    "s.SpellName4='测试自定义技能' and s.ID=12345",
+                    "250",
+                    True,
+                )
+                manager = CustomSkillsDialog(view)
+                root.update()
+                headings = {
+                    label.cget("text"): label
+                    for label in descendants(manager)
+                    if isinstance(label, tk.Label)
+                    and label.cget("text")
+                    in {"修改类型", "图标", "技能定义", "启用", "修改值", "查询条件"}
+                }
+                ordered = tuple(
+                    text
+                    for text, _label in sorted(
+                        headings.items(), key=lambda item: item[1].winfo_rootx()
+                    )
+                )
+                self.assertEqual(
+                    ordered,
+                    ("修改类型", "图标", "技能定义", "启用", "修改值", "查询条件"),
+                )
+                self.assertTrue(
+                    any(
+                        label.cget("image")
+                        for label in descendants(manager)
+                        if isinstance(label, tk.Label)
+                    )
+                )
+            finally:
+                if manager is not None and manager.winfo_exists():
+                    manager.destroy()
+                root.destroy()
 
     def test_skill_details_map_each_modification_type_to_its_database_field(self):
         groups = (

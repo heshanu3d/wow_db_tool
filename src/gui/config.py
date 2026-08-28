@@ -44,6 +44,8 @@ class AppSettings:
     window_geometry: str = "1280x800"
     feature_configs: dict[str, dict[str, dict[str, dict[str, Any]]]] = field(default_factory=dict)
     dialog_geometries: dict[str, str] = field(default_factory=dict)
+    spell_icon_dbc_path: str = ""
+    spell_icon_client_root: str = ""
 
 
 def _default_profiles() -> list[DatabaseProfile]:
@@ -82,6 +84,8 @@ def load_settings(path: Path = SETTINGS_FILE) -> AppSettings:
             window_geometry=raw.get("window_geometry", "1280x800"),
             dialog_geometries=dialog_geometries,
             feature_configs=feature_configs,
+            spell_icon_dbc_path=str(raw.get("spell_icon_dbc_path", "") or ""),
+            spell_icon_client_root=str(raw.get("spell_icon_client_root", "") or ""),
         )
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return AppSettings(profiles=_default_profiles())
@@ -95,6 +99,8 @@ def save_settings(settings: AppSettings, path: Path = SETTINGS_FILE) -> None:
         "window_geometry": settings.window_geometry,
         "dialog_geometries": settings.dialog_geometries,
         "feature_configs": settings.feature_configs,
+        "spell_icon_dbc_path": settings.spell_icon_dbc_path,
+        "spell_icon_client_root": settings.spell_icon_client_root,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")

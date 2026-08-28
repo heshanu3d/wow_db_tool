@@ -16,12 +16,14 @@ from src.customization.base import spell as spell_mod
 
 from .config import DatabaseProfile
 from .features import Feature, validate_skill_condition
+from .spell_icons import SkillIconReference
 
 
 @dataclass(frozen=True)
 class SkillDetails:
     descriptions: dict[str, str]
     current_values: dict[tuple[str, str], str]
+    icons: dict[str, SkillIconReference]
 
 
 @dataclass(frozen=True)
@@ -201,7 +203,7 @@ def load_skill_details(
 ) -> SkillDetails:
     """Read descriptions and the exact DB fields changed by every config group."""
     if not feature.configurable:
-        return SkillDetails({}, {})
+        return SkillDetails({}, {}, {})
 
     module = importlib.import_module(feature.module)
     if configuration is None:
@@ -218,7 +220,7 @@ def load_skill_details(
         )
     )
     if not names:
-        return SkillDetails({}, {})
+        return SkillDetails({}, {}, {})
     conditions = dict(module.cond)
     conditions.update(custom_conditions)
     missing_conditions = [name for name in names if name not in conditions]
@@ -238,6 +240,8 @@ def load_skill_details(
     )
     spell_columns = f"""
         s.ID AS spell_id,
+        s.SpellIconID AS spell_icon_id,
+        s.ActiveIconID AS active_icon_id,
         s.SpellName4 AS spell_name,
         {description_expr} AS skill_description,
         s.Effect1 AS effect_1, s.Effect2 AS effect_2, s.Effect3 AS effect_3,
@@ -441,9 +445,23 @@ def load_skill_details(
             else:
                 current_values[key] = _format_values(values)
 
+        icons: dict[str, SkillIconReference] = {}
+        for name, rows in rows_by_skill.items():
+            for row in rows:
+                icon_id = int(row.get("spell_icon_id") or 0)
+                active_icon_id = int(row.get("active_icon_id") or 0)
+                if icon_id or active_icon_id:
+                    icons[name] = SkillIconReference(
+                        spell_id=int(row.get("spell_id") or 0),
+                        spell_icon_id=icon_id,
+                        active_icon_id=active_icon_id,
+                    )
+                    break
+
         return SkillDetails(
             {name: descriptions.get(name, "") for name in names},
             {key: current_values.get(key, "") for key in raw_values},
+            icons,
         )
     finally:
         cursor.close()
