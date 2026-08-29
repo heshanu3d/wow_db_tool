@@ -6,6 +6,7 @@
 __pycache__
 # Local GUI database profiles (may contain passwords)
 .db_tool_gui.json
+.db_tool_gui_backups/
 .db_tool_cache/
 resources/wow_client/
 !requirements.txt

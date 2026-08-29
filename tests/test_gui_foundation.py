@@ -284,6 +284,27 @@ class GuiFoundationTests(unittest.TestCase):
             )
             self.assertEqual(load_settings(path).feature_configs, custom)
 
+    def test_save_settings_retains_loadable_rolling_backups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".db_tool_gui.json"
+            original = AppSettings(
+                profiles=[DatabaseProfile("原连接", "old-host", password="old-secret")],
+                feature_configs={"feature": {"group": {"skill": {"value": "1"}}}},
+            )
+            replacement = AppSettings(
+                profiles=[DatabaseProfile("新连接", "new-host", password="new-secret")]
+            )
+            save_settings(original, path)
+            save_settings(replacement, path)
+
+            backups = list((Path(directory) / ".db_tool_gui_backups").glob("*.json"))
+            self.assertEqual(len(backups), 1)
+            recovered = load_settings(backups[0])
+            self.assertEqual(recovered.profiles[0].name, "原连接")
+            self.assertEqual(recovered.profiles[0].host, "old-host")
+            self.assertTrue(recovered.feature_configs)
+            self.assertEqual(load_settings(path).profiles[0].name, "新连接")
+
     def test_settings_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"
@@ -814,11 +835,28 @@ class PyQtGuiMigrationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.qt_app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        settings_path = Path(__file__).resolve().parents[1] / ".db_tool_gui.json"
+        self._real_settings_snapshot = (
+            settings_path.read_bytes() if settings_path.exists() else None
+        )
+
     def tearDown(self):
-        for widget in list(QApplication.topLevelWidgets()):
-            widget.close()
-            widget.deleteLater()
-        QApplication.processEvents()
+        # DbToolApp.closeEvent persists geometry. Keep test fixture windows from
+        # ever writing their fake profiles into the developer's real settings.
+        with patch("src.gui.app.save_settings"):
+            for widget in list(QApplication.topLevelWidgets()):
+                widget.close()
+                widget.deleteLater()
+            QApplication.processEvents()
+
+        settings_path = Path(__file__).resolve().parents[1] / ".db_tool_gui.json"
+        current = settings_path.read_bytes() if settings_path.exists() else None
+        self.assertEqual(
+            current,
+            self._real_settings_snapshot,
+            "PyQt GUI tests must not modify the project's real settings file",
+        )
 
     def _skill_app(self, feature, *, icons=None, settings=None):
         settings = settings or AppSettings(profiles=[DatabaseProfile("测试")])

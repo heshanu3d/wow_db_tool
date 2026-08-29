@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_FILE = PROJECT_ROOT / ".db_tool_gui.json"
+SETTINGS_BACKUP_LIMIT = 20
 
 
 @dataclass
@@ -91,8 +95,35 @@ def load_settings(path: Path = SETTINGS_FILE) -> AppSettings:
         return AppSettings(profiles=_default_profiles())
 
 
+def _settings_backup_directory(path: Path) -> Path:
+    """Return a hidden, adjacent backup directory for a settings file."""
+    return path.parent / f"{path.stem}_backups"
+
+
+def _backup_existing_settings(path: Path, *, keep: int = SETTINGS_BACKUP_LIMIT) -> None:
+    """Keep rolling snapshots before replacing a settings file containing secrets."""
+    if not path.is_file():
+        return
+
+    backup_directory = _settings_backup_directory(path)
+    backup_directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(backup_directory, 0o700)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = backup_directory / f"{path.stem}.{timestamp}{path.suffix}"
+    shutil.copy2(path, backup)
+    os.chmod(backup, 0o600)
+
+    backups = sorted(
+        backup_directory.glob(f"{path.stem}.*{path.suffix}"),
+        key=lambda item: (item.stat().st_mtime_ns, item.name),
+        reverse=True,
+    )
+    for stale in backups[max(keep, 1) :]:
+        stale.unlink(missing_ok=True)
+
+
 def save_settings(settings: AppSettings, path: Path = SETTINGS_FILE) -> None:
-    """Persist settings atomically so an interrupted write cannot corrupt them."""
+    """Persist settings atomically and retain rolling snapshots of prior values."""
     payload = {
         "profiles": [asdict(profile) for profile in settings.profiles],
         "selected_profile": settings.selected_profile,
@@ -106,6 +137,8 @@ def save_settings(settings: AppSettings, path: Path = SETTINGS_FILE) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     try:
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        _backup_existing_settings(path)
         temporary.replace(path)
     finally:
         # replace() removes the temporary file on success. Clean it up after a
