@@ -65,6 +65,10 @@ from .spell_icons import (
     suggested_spell_icon_paths,
 )
 from .state import FeatureRun, FeatureStateStore
+from .versioned_skills import (
+    save_versioned_feature_configuration,
+    versioned_custom_skill_count,
+)
 
 COLORS = {
     "ink": "#162033",
@@ -709,31 +713,40 @@ class CustomSkillsDialog(QDialog):
         title = QLabel("管理自定义技能")
         title.setObjectName("dialogTitle")
         subtitle = QLabel(
-            "这里新增的技能会参与图标、当前值、描述查询和实际应用；完成后请回到技能配置页点击“保存配置”。"
+            "新增或编辑后可只保存到本机配置；需要让技能随软件发布时，点击“持久化到版本中”。"
         )
         subtitle.setWordWrap(True)
         subtitle.setObjectName("muted")
+        self.version_status = QLabel()
+        self.version_status.setObjectName("muted")
         root.addWidget(title)
         root.addWidget(subtitle)
+        root.addWidget(self.version_status)
         root.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
         add_button = QPushButton("新增技能")
-        add_button.setObjectName("primaryButton")
         edit_button = QPushButton("编辑")
         delete_button = QPushButton("删除")
         icon_button = QPushButton("图标资源")
+        persist_button = QPushButton("持久化到版本中")
+        persist_button.setObjectName("primaryButton")
+        persist_button.setToolTip(
+            "把当前职业的全部自定义技能写入 resources/versioned_custom_skills.json"
+        )
         close_button = QPushButton("关闭")
         add_button.clicked.connect(self._add)
         edit_button.clicked.connect(self._edit)
         delete_button.clicked.connect(self._delete)
         icon_button.clicked.connect(self._configure_icons)
+        persist_button.clicked.connect(self._persist_to_version)
         close_button.clicked.connect(self.accept)
         actions.addWidget(add_button)
         actions.addWidget(edit_button)
         actions.addWidget(delete_button)
         actions.addWidget(icon_button)
         actions.addStretch(1)
+        actions.addWidget(persist_button)
         actions.addWidget(close_button)
         root.addLayout(actions)
 
@@ -764,6 +777,17 @@ class CustomSkillsDialog(QDialog):
                 if key == selected:
                     self.table.selectRow(row)
                     break
+        self._update_version_status(len(rows))
+
+    def _update_version_status(self, current_count: int) -> None:
+        try:
+            released_count = versioned_custom_skill_count(self.view.feature.id)
+            self.version_status.setText(
+                f"当前列表 {current_count} 项 · 版本内 {released_count} 项 · "
+                "本地配置仍可覆盖版本默认值"
+            )
+        except ValueError as exc:
+            self.version_status.setText(f"版本化技能文件读取失败：{exc}")
 
     def _selected(self) -> tuple[str, str] | None:
         row = self.table.currentRow()
@@ -794,6 +818,29 @@ class CustomSkillsDialog(QDialog):
 
     def _configure_icons(self) -> None:
         IconResourcesDialog(self.view.app, self).exec_()
+
+    def _persist_to_version(self) -> None:
+        current_count = len(self.view.custom_skill_rows())
+        if not _confirm(
+            self,
+            "持久化自定义技能",
+            f"将用当前列表中的 {current_count} 项定义替换“{self.view.feature.title}”"
+            "在版本文件中的自定义技能。\n\n"
+            "保存后，这些定义会随源码发布；其他职业的版本化技能不受影响。",
+        ):
+            return
+        try:
+            path, count = self.view.persist_custom_skills_to_version()
+        except (OSError, TypeError, ValueError) as exc:
+            _message_error(self, "持久化失败", str(exc))
+            return
+        self.refresh_rows()
+        _message_info(
+            self,
+            "已持久化到版本",
+            f"已写入 {count} 项自定义技能：\n{path}\n\n"
+            "该文件可以提交到 Git，并会随软件一起发布。",
+        )
 
     def _icons_updated(self, _changed=None) -> None:
         self.refresh_rows()
@@ -885,7 +932,7 @@ class SkillConfigView(QWidget):
 
         icon_button = QPushButton("图标资源")
         custom_button = QPushButton("管理自定义技能")
-        reset_button = QPushButton("恢复代码默认值")
+        reset_button = QPushButton("恢复版本默认值")
         save_button = QPushButton("保存配置")
         back_button = QPushButton("← 返回职业技能")
         save_button.setObjectName("primaryButton")
@@ -1061,7 +1108,7 @@ class SkillConfigView(QWidget):
         custom = len(self.custom_conditions)
         text = f"已启用 {enabled} / {total} 项技能"
         if custom:
-            text += f" · GUI 自定义技能 {custom} 项"
+            text += f" · 自定义技能 {custom} 项"
         self.summary_label.setText(text)
 
     def _collect(self) -> dict:
@@ -1237,6 +1284,17 @@ class SkillConfigView(QWidget):
         self._update_summary()
         self._request_details()
 
+    def persist_custom_skills_to_version(self) -> tuple[Path, int]:
+        configuration = self._collect()
+        self.feature.configured_values(configuration)
+        path, count = save_versioned_feature_configuration(
+            self.feature.id,
+            configuration,
+            (group.config_name for group in self.feature.config_groups),
+        )
+        self.app.save_feature_configuration(self.feature, configuration)
+        return path, count
+
     def remove_custom_skill(self, group_name: str, skill: str) -> None:
         self._sync_widgets_to_configuration()
         if skill not in self.custom_conditions:
@@ -1256,11 +1314,15 @@ class SkillConfigView(QWidget):
         if not _confirm(
             self,
             "恢复默认配置",
-            "将所有技能恢复为当前代码中的默认启用状态和数值，并删除 GUI 中新增的自定义技能？",
+            "将所有技能恢复为当前发布版本中的默认启用状态和数值？"
+            "尚未持久化到版本的本地自定义技能会被删除。",
         ):
             return
-        self.configuration = self.feature.default_configuration()
-        self.custom_conditions = {}
+        defaults = self.feature.normalize_configuration({})
+        self.custom_conditions = dict(
+            defaults.pop(CUSTOM_SKILL_CONDITIONS_KEY, {})
+        )
+        self.configuration = defaults
         self._rebuild_groups(sync=False)
         self._update_summary()
         self._request_details()

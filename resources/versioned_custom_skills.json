@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "features": {
+    "class.priest.bundle": [
+      {
+        "modification_type": "mod_talent_skills",
+        "skill": "双生戒律",
+        "condition": "s.SpellName4='双生戒律'",
+        "enabled": true,
+        "value": "2"
+      }
+    ]
+  }
+}

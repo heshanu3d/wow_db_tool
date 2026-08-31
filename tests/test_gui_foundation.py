@@ -55,6 +55,12 @@ from src.gui.spell_icons import (
     suggested_spell_icon_paths,
 )
 from src.gui.state import FeatureStateStore
+from src.gui.versioned_skills import (
+    load_versioned_custom_skill_catalog,
+    load_versioned_feature_configuration,
+    save_versioned_feature_configuration,
+    versioned_custom_skill_count,
+)
 
 
 class GuiFoundationTests(unittest.TestCase):
@@ -238,6 +244,38 @@ class GuiFoundationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "与代码 cond 定义重复"):
             feature.configured_values(config)
 
+    def test_spell_bundle_executes_versioned_skill_without_local_settings(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        configuration = {
+            group.config_name: {
+                "版本内技能": {"enabled": True, "value": "250"}
+            },
+            CUSTOM_SKILL_CONDITIONS_KEY: {"版本内技能": "s.ID=12345"},
+        }
+        instance = Mock(name="mysql_instance")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "versioned_custom_skills.json"
+            save_versioned_feature_configuration(
+                feature.id,
+                configuration,
+                (item.config_name for item in feature.config_groups),
+                path,
+            )
+            with patch(
+                "src.gui.versioned_skills.VERSIONED_CUSTOM_SKILLS_FILE", path
+            ), patch("src.customization.base.spell.Mod") as mod_class, patch(
+                "builtins.print"
+            ):
+                feature.execute(instance, {})
+
+        self.assertEqual(mod_class.call_args.args[1]["版本内技能"], "s.ID=12345")
+        mod_class.return_value.mod_gcd_time.assert_called_once()
+        self.assertEqual(
+            mod_class.return_value.mod_gcd_time.call_args.args[0]["版本内技能"],
+            250,
+        )
+
     def test_spell_bundle_executes_gui_defined_skill_condition(self):
         feature = FEATURE_BY_ID["class.dk.bundle"]
         config = feature.default_configuration()
@@ -261,6 +299,110 @@ class GuiFoundationTests(unittest.TestCase):
         mod_class.assert_called_once_with(instance, expected_conditions)
         mod_class.return_value.mod_gcd_time.assert_called_once_with(
             {"测试自定义技能": 250}
+        )
+
+    def test_versioned_custom_skills_are_release_defaults_with_local_overrides(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        skill = "版本化测试技能"
+        configuration = {
+            group.config_name: {
+                skill: {"enabled": True, "value": "250"}
+            },
+            CUSTOM_SKILL_CONDITIONS_KEY: {skill: "s.ID=12345"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "versioned_custom_skills.json"
+            save_versioned_feature_configuration(
+                feature.id,
+                configuration,
+                (item.config_name for item in feature.config_groups),
+                path,
+            )
+            with patch(
+                "src.gui.versioned_skills.VERSIONED_CUSTOM_SKILLS_FILE", path
+            ):
+                normalized = feature.normalize_configuration({})
+                self.assertEqual(
+                    normalized[group.config_name][skill],
+                    {"enabled": True, "value": "250"},
+                )
+                self.assertEqual(
+                    normalized[CUSTOM_SKILL_CONDITIONS_KEY][skill], "s.ID=12345"
+                )
+                overridden = feature.normalize_configuration(
+                    {
+                        group.config_name: {
+                            skill: {"enabled": False, "value": "500"}
+                        }
+                    }
+                )
+                self.assertEqual(
+                    overridden[group.config_name][skill],
+                    {"enabled": False, "value": "500"},
+                )
+                self.assertEqual(
+                    overridden[CUSTOM_SKILL_CONDITIONS_KEY][skill], "s.ID=12345"
+                )
+
+    def test_versioned_custom_skill_catalog_preserves_other_professions(self):
+        dk = FEATURE_BY_ID["class.dk.bundle"]
+        priest = FEATURE_BY_ID["class.priest.bundle"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "versioned_custom_skills.json"
+            save_versioned_feature_configuration(
+                dk.id,
+                {
+                    dk.config_groups[0].config_name: {
+                        "测试一": {"enabled": True, "value": "0"}
+                    },
+                    CUSTOM_SKILL_CONDITIONS_KEY: {"测试一": "s.ID=100"},
+                },
+                (group.config_name for group in dk.config_groups),
+                path,
+            )
+            save_versioned_feature_configuration(
+                priest.id,
+                {
+                    priest.config_groups[2].config_name: {
+                        "测试二": {"enabled": True, "value": "2"}
+                    },
+                    CUSTOM_SKILL_CONDITIONS_KEY: {"测试二": "s.ID=200"},
+                },
+                (group.config_name for group in priest.config_groups),
+                path,
+            )
+
+            catalog = load_versioned_custom_skill_catalog(path)
+            self.assertEqual(set(catalog["features"]), {dk.id, priest.id})
+            self.assertEqual(versioned_custom_skill_count(dk.id, path), 1)
+            self.assertEqual(
+                load_versioned_feature_configuration(priest.id, path)[
+                    CUSTOM_SKILL_CONDITIONS_KEY
+                ],
+                {"测试二": "s.ID=200"},
+            )
+            save_versioned_feature_configuration(
+                dk.id,
+                {},
+                (group.config_name for group in dk.config_groups),
+                path,
+            )
+            self.assertEqual(
+                set(load_versioned_custom_skill_catalog(path)["features"]),
+                {priest.id},
+            )
+
+    def test_repository_catalog_contains_migrated_priest_skill(self):
+        feature = FEATURE_BY_ID["class.priest.bundle"]
+        normalized = feature.normalize_configuration({})
+        self.assertEqual(
+            normalized["mod_talent_skills"]["双生戒律"],
+            {"enabled": True, "value": "2"},
+        )
+        self.assertEqual(
+            normalized[CUSTOM_SKILL_CONDITIONS_KEY]["双生戒律"],
+            "s.SpellName4='双生戒律'",
         )
 
     def test_custom_skill_settings_round_trip(self):
@@ -970,7 +1112,7 @@ class PyQtGuiMigrationTests(unittest.TestCase):
         QApplication.processEvents()
         self.assertEqual(manager.width(), 880)
         manager_buttons = {button.text(): button for button in manager.findChildren(QPushButton)}
-        for label in ("新增技能", "编辑", "删除", "关闭"):
+        for label in ("新增技能", "编辑", "删除", "持久化到版本中", "关闭"):
             self.assertTrue(manager_buttons[label].isVisible())
 
         editor = CustomSkillEditorDialog(manager)
@@ -1221,6 +1363,41 @@ class PyQtGuiMigrationTests(unittest.TestCase):
                 ("修改类型", "图标", "技能定义", "启用", "修改值", "查询条件"),
             )
             self.assertFalse(manager.table.item(0, 1).icon().isNull())
+
+    def test_persist_custom_skills_writes_release_catalog_and_local_settings(self):
+        feature = FEATURE_BY_ID["class.dk.bundle"]
+        group = feature.config_groups[0]
+        app = self._skill_app(feature)
+        view = SkillConfigView(app, feature)
+        view.upsert_custom_skill(
+            None,
+            None,
+            group.config_name,
+            "版本化测试技能",
+            "s.ID=12345",
+            "250",
+            True,
+        )
+        target = Path("/tmp/versioned_custom_skills.json")
+        with patch(
+            "src.gui.app.save_versioned_feature_configuration",
+            return_value=(target, 1),
+        ) as persist:
+            result = view.persist_custom_skills_to_version()
+
+        self.assertEqual(result, (target, 1))
+        saved_configuration = persist.call_args.args[1]
+        self.assertEqual(
+            saved_configuration[group.config_name]["版本化测试技能"],
+            {"enabled": True, "value": "250"},
+        )
+        self.assertEqual(
+            saved_configuration[CUSTOM_SKILL_CONDITIONS_KEY]["版本化测试技能"],
+            "s.ID=12345",
+        )
+        app.save_feature_configuration.assert_called_once_with(
+            feature, saved_configuration
+        )
 
     def test_restore_defaults_does_not_reapply_stale_widget_values(self):
         feature = FEATURE_BY_ID["class.dk.bundle"]

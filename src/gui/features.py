@@ -10,8 +10,10 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any
 
-
-CUSTOM_SKILL_CONDITIONS_KEY = "__custom_skill_conditions__"
+from .versioned_skills import (
+    CUSTOM_SKILL_CONDITIONS_KEY,
+    merge_versioned_feature_configuration,
+)
 
 _INTEGER_SKILL_FUNCTIONS = {
     "mod_gcd_time",
@@ -263,7 +265,7 @@ class Feature:
 
     def normalize_configuration(self, configuration: Any = None) -> dict[str, Any]:
         defaults = self.default_configuration()
-        source = configuration if isinstance(configuration, dict) else {}
+        source = merge_versioned_feature_configuration(self.id, configuration)
         custom_conditions = self.custom_skill_conditions(source)
         normalized: dict[str, Any] = {}
         for group in self.config_groups:
@@ -359,10 +361,11 @@ class Feature:
         if self.action_kind == "spell_bundle":
             from src.customization.base import spell
 
+            normalized = self.normalize_configuration(configuration)
             conditions = dict(module.cond)
-            conditions.update(self.custom_skill_conditions(configuration, validate=True))
+            conditions.update(self.custom_skill_conditions(normalized, validate=True))
             mod = spell.Mod(instance, conditions)
-            configured = self.configured_values(configuration)
+            configured = self.configured_values(normalized)
             for group in self.config_groups:
                 values = configured[group.config_name]
                 if not values:
