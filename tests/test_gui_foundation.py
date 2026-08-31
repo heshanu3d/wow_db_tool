@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtCore import QPoint, QPointF, Qt
+from PyQt5.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
 from PyQt5.QtGui import QWheelEvent
 from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QWidget
 
@@ -928,6 +928,11 @@ class GuiFoundationTests(unittest.TestCase):
         self.assertIn("spellcasttimes", cursor.execute.call_args_list[3].args[0])
 
 
+    def test_database_profile_uses_pure_python_connector_on_all_platforms(self):
+        config = DatabaseProfile("测试", "db.example", 3307).connector_config()
+        self.assertTrue(config["use_pure"])
+        self.assertEqual(config["connection_timeout"], 5)
+
     def test_settings_round_trip_after_editing_existing_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"
@@ -1215,6 +1220,28 @@ class PyQtGuiMigrationTests(unittest.TestCase):
                 if button.text() == "配置技能" and button.isVisible()
             ]
             self.assertEqual(len(buttons), 4)
+
+    def test_late_state_refresh_does_not_render_a_deleted_feature_page(self):
+        settings = AppSettings(profiles=[DatabaseProfile("测试")])
+        with patch("src.gui.app.load_settings", return_value=settings), patch.object(
+            DbToolApp, "_refresh_worker"
+        ), patch("src.gui.app.save_settings"), patch.object(
+            FeatureStateStore, "history", return_value=[]
+        ):
+            app = DbToolApp()
+            app.show()
+            QApplication.processEvents()
+            old_cards_frame = app.cards_frame
+
+            app.show_history()
+            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+            QApplication.processEvents()
+
+            self.assertIsNone(app.cards_frame)
+            self.assertIsNotNone(old_cards_frame)
+            app._state_ready({}, "")
+            titles = {label.text() for label in app.findChildren(QLabel)}
+            self.assertIn("执行历史", titles)
 
     def test_skill_configuration_headers_defaults_and_dynamic_details(self):
         feature = FEATURE_BY_ID["class.dk.bundle"]

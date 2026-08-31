@@ -31,6 +31,11 @@ class DatabaseProfile:
             "password": self.password,
             "database": self.database.strip(),
             "connection_timeout": 5,
+            # Connector/Python wheels on Windows normally include the native C
+            # extension, while many Linux environments use the pure-Python path.
+            # Keep database behavior consistent and avoid native worker-thread
+            # failures taking down the entire Qt process.
+            "use_pure": True,
         }
         if self.auth_plugin.strip():
             config["auth_plugin"] = self.auth_plugin.strip()

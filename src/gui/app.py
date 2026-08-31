@@ -1359,6 +1359,9 @@ class DbToolApp(QMainWindow):
         self.current_skill_view: SkillConfigView | None = None
         self.running = False
         self.cards_frame: ScrollFrame | None = None
+        self.search_edit: QLineEdit | None = None
+        self.status_combo: QComboBox | None = None
+        self.summary_label: QLabel | None = None
         self._signals = _WorkerSignals(self)
         self._signals.state_ready.connect(self._state_ready)
         self._signals.run_progress.connect(self._run_progress)
@@ -1368,11 +1371,13 @@ class DbToolApp(QMainWindow):
         self._build_shell()
         self._reload_profile_widgets(refresh=False)
         self.show_features()
-        threading.Thread(
-            target=self._refresh_worker,
-            args=(replace(self.profile),),
-            daemon=True,
-        ).start()
+        # Let the native window finish its first paint before starting network I/O.
+        # This is especially important on Windows, where a fast worker callback can
+        # otherwise race page creation/deletion during the first event-loop turn.
+        self._startup_refresh_timer = QTimer(self)
+        self._startup_refresh_timer.setSingleShot(True)
+        self._startup_refresh_timer.timeout.connect(self.refresh_state)
+        self._startup_refresh_timer.start(150)
 
     @property
     def profile(self) -> DatabaseProfile:
@@ -1531,6 +1536,13 @@ class DbToolApp(QMainWindow):
         return button
 
     def _clear_main(self) -> None:
+        # Background database signals may arrive after the user has navigated away.
+        # Clear every feature-page reference before scheduling its Qt widgets for
+        # deletion so a late callback cannot touch an already-deleted C++ object.
+        self.cards_frame = None
+        self.search_edit = None
+        self.status_combo = None
+        self.summary_label = None
         if self.current_skill_view is not None:
             if self.current_skill_view.preserve_navigation_state:
                 self.skill_navigation_states[
@@ -1597,8 +1609,16 @@ class DbToolApp(QMainWindow):
         return run.status if run.status in STATUS_STYLE else "none"
 
     def _filtered_features(self):
-        query = self.search_edit.text().strip().lower() if hasattr(self, "search_edit") else ""
-        status_filter = self.status_combo.currentText() if hasattr(self, "status_combo") else "全部状态"
+        query = (
+            self.search_edit.text().strip().lower()
+            if self.search_edit is not None
+            else ""
+        )
+        status_filter = (
+            self.status_combo.currentText()
+            if self.status_combo is not None
+            else "全部状态"
+        )
         for feature in FEATURES:
             if self.category != "全部功能" and feature.category != self.category:
                 continue
@@ -1616,12 +1636,14 @@ class DbToolApp(QMainWindow):
             yield feature
 
     def _render_cards(self) -> None:
-        if self.cards_frame is None:
+        cards_frame = self.cards_frame
+        summary_label = self.summary_label
+        if cards_frame is None or summary_label is None:
             return
-        self.cards_frame.clear()
+        cards_frame.clear()
         features = list(self._filtered_features())
         statuses = [self._run_status(feature) for feature in FEATURES]
-        self.summary_label.setText(
+        summary_label.setText(
             f"共 {len(FEATURES)} 项 · 已应用 {sum(s in ('applied', 'marked') for s in statuses)} "
             f"· 有更新 {statuses.count('updated')} · 失败 {statuses.count('failed')}"
         )
@@ -1629,10 +1651,10 @@ class DbToolApp(QMainWindow):
             empty = QLabel("没有匹配的功能")
             empty.setAlignment(Qt.AlignCenter)
             empty.setMinimumHeight(180)
-            self.cards_frame.add_widget(empty)
+            cards_frame.add_widget(empty)
             return
         for feature in features:
-            self.cards_frame.add_widget(self._create_feature_card(feature))
+            cards_frame.add_widget(self._create_feature_card(feature))
 
     def _create_feature_card(self, feature: Feature) -> QFrame:
         status_key = self._run_status(feature)
